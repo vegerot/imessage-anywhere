@@ -42,8 +42,8 @@ func runFakeImsg(transcriptPath, logPath string) {
 	if err != nil {
 		panic(err)
 	}
-	methodByID := map[string]string{}
-	recorded := map[string]json.RawMessage{} // method -> first recorded response line
+	keyByID := map[string]string{}
+	recorded := map[string]json.RawMessage{} // request key (method, or method#chat_id) -> first recorded response line
 	var notifications []json.RawMessage      // params.message of each "message" notification
 	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
 		var rec struct{ Dir, Line string }
@@ -56,18 +56,21 @@ func runFakeImsg(transcriptPath, logPath string) {
 			Method string          `json:"method"`
 			Params struct {
 				Message json.RawMessage `json:"message"`
+				ChatID  int64           `json:"chat_id"`
 			} `json:"params"`
 		}
 		must(json.Unmarshal([]byte(rec.Line), &msg))
 		switch {
 		case rec.Dir == "in":
-			methodByID[string(msg.ID)] = msg.Method
+			keyByID[string(msg.ID)] = requestKey(msg.Method, msg.Params.ChatID)
 		case msg.Method == "message":
 			notifications = append(notifications, msg.Params.Message)
 		case msg.ID != nil:
-			method := methodByID[string(msg.ID)]
-			if _, seen := recorded[method]; !seen {
-				recorded[method] = json.RawMessage(rec.Line)
+			key := keyByID[string(msg.ID)]
+			for _, k := range []string{key, strings.Split(key, "#")[0]} {
+				if _, seen := recorded[k]; !seen {
+					recorded[k] = json.RawMessage(rec.Line)
+				}
 			}
 		}
 	}
@@ -90,6 +93,7 @@ func runFakeImsg(transcriptPath, logPath string) {
 			Method string          `json:"method"`
 			Params struct {
 				SinceRowID int64 `json:"since_rowid"`
+				ChatID     int64 `json:"chat_id"`
 			} `json:"params"`
 		}
 		must(json.Unmarshal(scanner.Bytes(), &req))
@@ -107,7 +111,10 @@ func runFakeImsg(transcriptPath, logPath string) {
 		case "watch.unsubscribe":
 			reply(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": map[string]any{"ok": true}})
 		default:
-			line, ok := recorded[req.Method]
+			line, ok := recorded[requestKey(req.Method, req.Params.ChatID)]
+			if !ok {
+				line, ok = recorded[req.Method]
+			}
 			if !ok {
 				fmt.Fprintln(log, "UNCOVERED", req.Method)
 				reply(map[string]any{"jsonrpc": "2.0", "id": req.ID, "error": map[string]any{"code": -32601, "message": "fake imsg: no recorded response for " + req.Method}})
@@ -119,6 +126,14 @@ func runFakeImsg(transcriptPath, logPath string) {
 			reply(resp)
 		}
 	}
+}
+
+// requestKey lets the fake answer per Conversation when a transcript holds several.
+func requestKey(method string, chatID int64) string {
+	if chatID == 0 {
+		return method
+	}
+	return fmt.Sprintf("%s#%d", method, chatID)
 }
 
 func must(err error) {
@@ -325,5 +340,73 @@ func TestConversationMessagesAreOldestFirstAndDefaultToTheLast100(t *testing.T) 
 	reqs := p.imsgRequests(t, "messages.history")
 	if len(reqs) != 2 || reqs[0]["chat_id"] != 242.0 || reqs[0]["limit"] != 100.0 || reqs[1]["limit"] != 1.0 {
 		t.Errorf("messages.history requests = %v, want chat_id 242 with limit 100, then limit 1", reqs)
+	}
+}
+
+func messageByID(t *testing.T, messages []Message, id int64) Message {
+	t.Helper()
+	for _, m := range messages {
+		if m.ID == id {
+			return m
+		}
+	}
+	t.Fatalf("Message %d not found", id)
+	return Message{}
+}
+
+func TestGroupMessagesShowSendersAndTapbacks(t *testing.T) {
+	p := startProxy(t, "imsg-0.21.0-02.jsonl")
+
+	got := messageByID(t, decode[[]Message](t, p.get(t, "/api/conversations/21/messages", tailnetAddr)), 183536)
+
+	if got.SenderName != "Synthetic Name 1" {
+		t.Errorf("SenderName = %q, want the sender's Contact name", got.SenderName)
+	}
+	want := []Reaction{{Emoji: "❤️", From: "Synthetic Name 2"}, {Emoji: "❤️", From: "Synthetic Name 3"}}
+	if fmt.Sprint(got.Reactions) != fmt.Sprint(want) {
+		t.Errorf("Reactions = %+v, want %+v", got.Reactions, want)
+	}
+	if reqs := p.imsgRequests(t, "messages.history"); len(reqs) != 1 || reqs[0]["attachments"] != true {
+		t.Errorf("messages.history requests = %v, want attachments: true (to label attachment-only Messages)", reqs)
+	}
+}
+
+// Message types the page can't show yet get a placeholder instead of vanishing.
+func TestUnsupportedMessagesGetPlaceholders(t *testing.T) {
+	p := startProxy(t, "imsg-0.21.0-02.jsonl")
+	group := decode[[]Message](t, p.get(t, "/api/conversations/21/messages", tailnetAddr))
+	edits := decode[[]Message](t, p.get(t, "/api/conversations/1947/messages", tailnetAddr))
+	polls := decode[[]Message](t, p.get(t, "/api/conversations/2093/messages", tailnetAddr))
+	apps := decode[[]Message](t, p.get(t, "/api/conversations/47/messages", tailnetAddr))
+
+	for _, tc := range []struct {
+		name        string
+		got         Message
+		text        string
+		placeholder string
+	}{
+		{"attachment-only photo", messageByID(t, group, 183536), "", "📷 Photo"},
+		{"sticker", messageByID(t, edits, 183553), "", "Sticker"},
+		{"poll vote", messageByID(t, polls, 178893), "", "📊 Poll vote"},
+		{"Apple Cash", messageByID(t, apps, 183542), "Synthetic message 283", "🧩 Apple Cash"},
+	} {
+		if tc.got.Text != tc.text || tc.got.Placeholder != tc.placeholder {
+			t.Errorf("%s: Text %q, Placeholder %q; want %q, %q", tc.name, tc.got.Text, tc.got.Placeholder, tc.text, tc.placeholder)
+		}
+	}
+	if edited := messageByID(t, edits, 183568); !edited.Edited || edited.Text != "Synthetic message 93" {
+		t.Errorf("edited Message = %+v, want Edited with its current text", edited)
+	}
+}
+
+// A whitespace-only Message (seen in the wild: text "\n", no attachment or app) has
+// nothing to show, so it's left out rather than drawn as an empty bubble.
+func TestContentlessMessagesAreLeftOut(t *testing.T) {
+	p := startProxy(t, "imsg-0.21.0-02.jsonl")
+
+	for _, m := range decode[[]Message](t, p.get(t, "/api/conversations/1947/messages", tailnetAddr)) {
+		if m.ID == 183562 {
+			t.Errorf("whitespace-only Message 183562 was served: %+v", m)
+		}
 	}
 }

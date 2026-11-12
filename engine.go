@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -212,47 +213,154 @@ func formatHandle(handle string) string {
 
 // Message is one item sent or received in a Conversation, as the page sees it.
 type Message struct {
-	ID             int64  `json:"id"`
-	ConversationID int64  `json:"conversationId"`
-	FromMe         bool   `json:"fromMe"`
-	Sender         string `json:"sender"`
-	SenderName     string `json:"senderName,omitempty"`
-	Text           string `json:"text"`
-	CreatedAt      string `json:"createdAt"`
+	ID             int64      `json:"id"`
+	ConversationID int64      `json:"conversationId"`
+	FromMe         bool       `json:"fromMe"`
+	Sender         string     `json:"sender"`
+	SenderName     string     `json:"senderName,omitempty"` // Contact name or formatted Handle; empty for my own
+	Text           string     `json:"text"`
+	CreatedAt      string     `json:"createdAt"`
+	Edited         bool       `json:"edited,omitempty"`
+	Reactions      []Reaction `json:"reactions,omitempty"`
+	// Placeholder names what the page can't show yet (attachments, polls, app messages,
+	// unsent Messages), so nothing vanishes silently.
+	Placeholder string `json:"placeholder,omitempty"`
+}
+
+// Reaction is a tapback on a Message.
+type Reaction struct {
+	Emoji  string `json:"emoji"`
+	From   string `json:"from"`
+	FromMe bool   `json:"fromMe,omitempty"`
 }
 
 type imsgMessage struct {
-	ID         int64  `json:"id"`
-	ChatID     int64  `json:"chat_id"`
-	IsFromMe   bool   `json:"is_from_me"`
-	Sender     string `json:"sender"`
-	SenderName string `json:"sender_name"`
-	Text       string `json:"text"`
-	CreatedAt  string `json:"created_at"`
+	ID              int64  `json:"id"`
+	ChatID          int64  `json:"chat_id"`
+	IsFromMe        bool   `json:"is_from_me"`
+	Sender          string `json:"sender"`
+	SenderName      string `json:"sender_name"`
+	Text            string `json:"text"`
+	CreatedAt       string `json:"created_at"`
+	EditedAt        string `json:"edited_at"`
+	UnsentAt        string `json:"unsent_at"`
+	BalloonBundleID string `json:"balloon_bundle_id"`
+	Poll            *struct {
+		Kind     string `json:"kind"`
+		Question string `json:"question"`
+	} `json:"poll"`
+	Reactions []struct {
+		Emoji      string `json:"emoji"`
+		Sender     string `json:"sender"`
+		SenderName string `json:"sender_name"`
+		IsFromMe   bool   `json:"is_from_me"`
+	} `json:"reactions"`
+	Attachments []imsgAttachment `json:"attachments"`
 }
 
+type imsgAttachment struct {
+	TransferName string `json:"transfer_name"`
+	UTI          string `json:"uti"`
+	IsSticker    bool   `json:"is_sticker"`
+	Missing      bool   `json:"missing"`
+}
+
+// objectReplacement marks where an attachment or app balloon sits inside a Message's text.
+const objectReplacement = "\ufffc"
+
 func (m imsgMessage) toMessage() Message {
-	return Message{
+	msg := Message{
 		ID:             m.ID,
 		ConversationID: m.ChatID,
 		FromMe:         m.IsFromMe,
 		Sender:         m.Sender,
-		SenderName:     m.SenderName,
-		Text:           m.Text,
+		Text:           strings.TrimSpace(strings.ReplaceAll(m.Text, objectReplacement, "")),
 		CreatedAt:      m.CreatedAt,
+		Edited:         m.EditedAt != "",
+		Placeholder:    m.placeholder(),
+	}
+	if !m.IsFromMe {
+		msg.SenderName = nameOr(m.SenderName, m.Sender)
+	}
+	for _, r := range m.Reactions {
+		msg.Reactions = append(msg.Reactions, Reaction{Emoji: r.Emoji, From: nameOr(r.SenderName, r.Sender), FromMe: r.IsFromMe})
+	}
+	return msg
+}
+
+func nameOr(name, handle string) string {
+	if name != "" {
+		return name
+	}
+	return formatHandle(handle)
+}
+
+func (m imsgMessage) placeholder() string {
+	switch {
+	case m.UnsentAt != "":
+		return "Unsent a message"
+	case m.Poll != nil && m.Poll.Kind == "vote":
+		return "📊 Poll vote"
+	case m.Poll != nil && m.Poll.Question != "":
+		return "📊 Poll: " + m.Poll.Question
+	case m.Poll != nil:
+		return "📊 Poll"
+	case m.BalloonBundleID != "" && !strings.Contains(m.BalloonBundleID, "URLBalloonProvider"):
+		return "🧩 " + appName(m.BalloonBundleID)
+	case len(m.Attachments) > 0 && !strings.Contains(m.BalloonBundleID, "URLBalloonProvider"):
+		label := attachmentLabel(m.Attachments[0])
+		if extra := len(m.Attachments) - 1; extra > 0 {
+			label += fmt.Sprintf(" (+%d)", extra)
+		}
+		return label
+	default:
+		return ""
+	}
+}
+
+// appName names the iMessage apps seen in my Messages; others are just "App message".
+func appName(bundleID string) string {
+	for fragment, name := range map[string]string{
+		"PeerPayment":  "Apple Cash",
+		"gamepigeon":   "GamePigeon",
+		"Handwriting":  "Handwriting",
+		"DigitalTouch": "Digital Touch",
+	} {
+		if strings.Contains(bundleID, fragment) {
+			return name
+		}
+	}
+	return "App message"
+}
+
+func attachmentLabel(a imsgAttachment) string {
+	switch {
+	case a.IsSticker:
+		return "Sticker"
+	case strings.Contains(a.UTI, "image") || a.UTI == "public.heic" || a.UTI == "public.jpeg" || a.UTI == "public.png":
+		return "📷 Photo"
+	case strings.Contains(a.UTI, "movie") || strings.Contains(a.UTI, "video") || a.UTI == "public.mpeg-4":
+		return "🎬 Video"
+	case strings.Contains(a.UTI, "audio") || a.UTI == "com.apple.coreaudio-format":
+		return "🎤 Audio"
+	default:
+		return "📎 " + a.TransferName
 	}
 }
 
 // Messages returns a Conversation's newest limit Messages, oldest first.
 func (e *Engine) Messages(ctx context.Context, conversationID int64, limit int) ([]Message, error) {
 	var result struct{ Messages []imsgMessage }
-	params := map[string]any{"chat_id": conversationID, "limit": limit}
+	// attachments: true adds attachment metadata, so attachment-only Messages get a label.
+	params := map[string]any{"chat_id": conversationID, "limit": limit, "attachments": true}
 	if err := e.call(ctx, "messages.history", params, &result); err != nil {
 		return nil, err
 	}
-	messages := make([]Message, len(result.Messages))
-	for i, m := range result.Messages { // imsg returns newest first
-		messages[len(messages)-1-i] = m.toMessage()
+	messages := make([]Message, 0, len(result.Messages))
+	for _, m := range slices.Backward(result.Messages) { // imsg returns newest first
+		if msg := m.toMessage(); msg.Text != "" || msg.Placeholder != "" || len(msg.Reactions) > 0 {
+			messages = append(messages, msg)
+		}
 	}
 	return messages, nil
 }

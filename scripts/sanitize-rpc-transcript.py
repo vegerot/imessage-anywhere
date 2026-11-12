@@ -13,14 +13,20 @@ import uuid
 
 KEEP = {
     "jsonrpc", "id", "method", "error", "message", "data", "supported_methods", "methods",
-    "version", "service", "transport", "send_state", "uti", "mime_type",
+    "version", "service", "transport", "send_state", "uti", "mime_type", "kind", "type",
     "last_message_at", "created_at", "checked_at", "date_read", "date_delivered", "delivered_at",
+    "edited_at", "unsent_at", "emoji", "balloon_bundle_id", "bundle_id", "event", "event_type",
 }
 HANDLE_KEYS = {
     "identifier", "participants", "last_addressed_handle", "sender", "destination_caller_id",
     "chat_identifier", "name", "display_name", "chat_name", "account_login", "to",
-    "contact_name", "sender_name",
+    "contact_name", "sender_name", "participant",
 }
+GUID_KEYS = {
+    "guid", "chat_guid", "message_id", "account_id", "reply_to_guid", "thread_originator_guid",
+    "poll_guid", "original_guid", "reacted_to_guid",
+}
+UUID_SHAPE = re.compile(r"[0-9A-Fa-f]{8}(-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}")
 replaced = set()  # every real string we rewrote, for the leak check at the end
 fakes = {}
 
@@ -65,10 +71,17 @@ def path(value):
     return fake("path", value, lambda n: f"~/Library/Messages/Attachments/00/00/{n:04d}/attachment-{n}{ext}")
 
 
+OBJECT_REPLACEMENT = "\ufffc"  # where Messages puts an attachment inside a Message's text
+
+
 def text(value):
     if value.startswith("🧪"):
         return value
-    return fake("text", value, lambda n: f"Synthetic message {n}")
+    # Keep attachment markers: they're structure, not content, and the page relies on them.
+    markers = OBJECT_REPLACEMENT * value.count(OBJECT_REPLACEMENT)
+    if not value.replace(OBJECT_REPLACEMENT, "").strip():
+        return value
+    return fake("text", value, lambda n: f"Synthetic message {n}") + markers
 
 
 def clean(value, key=None):
@@ -76,13 +89,15 @@ def clean(value, key=None):
         return {k: clean(v, k) for k, v in value.items()}
     if isinstance(value, list):
         return [clean(v, key) for v in value]
+    if key == "id" and isinstance(value, str) and UUID_SHAPE.fullmatch(value):
+        return guid(value)  # e.g. a poll option's id, which option_id elsewhere refers to
     if not isinstance(value, str) or key in KEEP:
         return value
     if len(value) >= 5 and not value.startswith("🧪"):
         replaced.add(value)
     if key in HANDLE_KEYS:
         return handle(value)
-    if key in {"guid", "chat_guid", "message_id", "account_id"}:
+    if key in GUID_KEYS:
         return guid(value)
     if key in {"path", "original_path", "filename"}:
         return path(value)

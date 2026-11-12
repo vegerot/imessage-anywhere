@@ -95,3 +95,15 @@ Next:
 
 Next:
 - Ticket 02 (Read a Conversation).
+
+## 2026-11-12 — ✅ 02 Read a Conversation (real-device browser check pending)
+
+- 💬 Choosing a Conversation shows its last 100 Messages: bubbles (blue iMessage, green SMS/RCS, gray received), group sender labels, Messages.app-style time dividers ("**Yesterday** 8:12 AM", after an hour of silence), clickable links, tapback badges with who reacted, "Edited" under edited Messages, and placeholders for photos, videos, audio, files, stickers, polls, app messages (e.g. "🧩 Apple Cash"), and unsent Messages. Whitespace-only Messages (seen in the wild: text "\n") are left out. At phone width the list and the Conversation are separate screens with a back link. Hash routing (`#/conversations/<id>`).
+- 🧪 Seam tests: 8 pass. New transcript `testdata/imsg-0.21.0-02.jsonl` (group 21, edits 1947, polls 2093, Apple Cash 47); the fake now answers per `chat_id`; 01 re-recorded with `attachments: true` because the request shape changed. Sanitizer fixes found while recording: keep enums and timestamps (`emoji`, `edited_at`, `balloon_bundle_id`, poll `kind`), link GUID references (`reply_to_guid`, poll GUIDs), and keep U+FFFC attachment markers; its leak check caught two real values and refused to write.
+- 🎨 Style: iOS 27 measured through iPhone Mirroring (Max unlocked it): small centered "Messages" title (not a large title), chevrons after the time, purple-gray default avatars, black background, received bubble `oklch(32.2% 0.009 284)`. Side effect: opening Coplan Chat on the iPhone marked its 15 unread Messages read (logged in questions).
+- ✅ Checked: Chrome over loopback at desktop width (group 21 matches the iPhone: sender labels, ❤️❤️ on yesterday's photo, the "Yesterday" divider) and in 390 px frames (dark group, light 1:1 with edits/sticker/link, iOS list). From `maxs-pc` (Windows boot) over the tailnet: page 200, 100 Conversations, group 21 with 42 tapbacked Messages; via the home LAN to `172.16.1.2`: 403, as designed.
+- ⚡ Preview filling uses 2 workers: with 4, opening a Conversation queued behind previews (imsg serves 4 reads at a time).
+- Pending: a browser look on the Android phone and on `maxs-pc` (questions-for-max item 6).
+
+Next:
+- Ticket 03 (Live Messages).

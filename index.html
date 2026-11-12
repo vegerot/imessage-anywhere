@@ -9,8 +9,9 @@
 <style>
 	/*
 	 * Look and feel follows Messages.app: macOS at desktop widths, iOS at phone widths.
-	 * Dark values were measured from Messages.app 27.2 on macOS (2026-11-12, window capture);
-	 * light values are Apple's system colors (not measured).
+	 * Dark values were measured on 2026-11-12 from window captures of Messages.app 27.2
+	 * (macOS) and of iOS 27 Messages through iPhone Mirroring. Light values are Apple's
+	 * system colors (not measured).
 	 */
 	:root {
 		color-scheme: light dark;
@@ -22,12 +23,17 @@
 		--text: light-dark(black, oklch(94.3% 0 0));
 		--secondary-text: light-dark(oklch(64.8% 0.007 286), oklch(60.4% 0 0));
 		--accent: light-dark(oklch(60.3% 0.218 257), oklch(70.2% 0.151 251));
-		--phone-list-bg: light-dark(white, black); /* iOS Messages list (not measured yet) */
 		--avatar-bg: linear-gradient(light-dark(oklch(76% 0.01 286), oklch(62% 0 0)), light-dark(oklch(62% 0.01 286), oklch(48% 0 0)));
+
+		--imessage-bubble: light-dark(oklch(60.3% 0.218 257), oklch(70.7% 0.148 251));
+		--sms-bubble: light-dark(oklch(73% 0.194 147), oklch(75.6% 0.208 147)); /* systemGreen */
+		--received-bubble: light-dark(oklch(93.5% 0.003 286), oklch(41.6% 0 0));
+		--tapback-bg: light-dark(oklch(93.5% 0.003 286), oklch(36% 0 0));
 
 		--sidebar-width: 20rem; /* 320 pt */
 		--avatar-size: 2.5rem; /* 40 pt */
 		--unread-dot-size: 0.5625rem; /* 9 pt */
+		--bubble-radius: 1.125rem;
 		--gutter: 0.75rem;
 
 		accent-color: var(--accent);
@@ -38,6 +44,7 @@
 		grid-template-columns: var(--sidebar-width) 1fr;
 		block-size: 100dvh;
 		margin: 0;
+		overflow: hidden;
 
 		font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
 		line-height: 1.3;
@@ -156,36 +163,181 @@
 		overflow-wrap: anywhere;
 	}
 
+	/* The Conversation pane. */
 	main {
 		display: grid;
-		place-items: center;
+		grid-template-rows: auto 1fr;
+		min-block-size: 0;
 
-		color: var(--secondary-text);
+		> p {
+			grid-row: 1 / -1;
+			place-self: center;
+
+			color: var(--secondary-text);
+		}
+
+		header {
+			display: grid;
+			grid-template-columns: auto 1fr auto;
+			align-items: center;
+			padding: 0.75rem var(--gutter);
+
+			border-block-end: 1px solid var(--separator);
+
+			h2 {
+				grid-column: 2;
+				margin: 0;
+				justify-self: center;
+
+				font-size: 0.9375rem;
+				text-align: center;
+			}
+
+			.back {
+				display: none;
+			}
+		}
 	}
 
-	/* Phone width: iOS layout, a full-width list with a large title. */
+	#messages {
+		display: flex;
+		flex-direction: column;
+		gap: 0.125rem;
+		margin: 0;
+		padding: 1rem var(--gutter);
+		overflow-y: auto;
+
+		list-style: none;
+
+		.divider {
+			align-self: center;
+			margin-block: 0.75rem 0.25rem;
+
+			font-size: 0.75rem;
+			color: var(--secondary-text);
+
+			b {
+				font-weight: 600;
+			}
+		}
+
+		.sender {
+			margin-block-start: 0.5rem;
+			padding-inline-start: 0.75rem;
+
+			font-size: 0.75rem;
+			color: var(--secondary-text);
+		}
+
+		.message {
+			display: grid;
+			justify-items: start;
+			max-inline-size: min(70%, 34rem);
+
+			&.from-me {
+				align-self: end;
+				justify-items: end;
+			}
+
+			&:has(.tapbacks) {
+				margin-block-start: 1.25rem;
+			}
+		}
+
+		.bubble {
+			position: relative;
+			margin: 0;
+			padding: 0.4375rem 0.75rem;
+
+			font-size: 1rem;
+			white-space: pre-wrap;
+			overflow-wrap: anywhere;
+
+			background: var(--received-bubble);
+			border-radius: var(--bubble-radius);
+
+			.from-me & {
+				color: white;
+
+				background: var(--sms-bubble);
+			}
+
+			.from-me.imessage & {
+				background: var(--imessage-bubble);
+			}
+
+			a {
+				color: inherit;
+			}
+		}
+
+		.placeholder {
+			display: block;
+
+			font-style: italic;
+			opacity: 0.8;
+		}
+
+		.tapbacks {
+			position: absolute;
+			inset-block-start: -1.125rem;
+			inset-inline-end: -0.625rem;
+			padding: 0.125rem 0.375rem;
+
+			font-size: 0.875rem;
+			white-space: nowrap;
+
+			background: var(--tapback-bg);
+			border: 2px solid var(--conversation-bg);
+			border-radius: 1rem;
+
+			.from-me & {
+				inset-inline: -0.625rem auto;
+			}
+		}
+
+		.edited {
+			padding-inline: 0.75rem;
+
+			font-size: 0.6875rem;
+			color: var(--secondary-text);
+		}
+	}
+
+	/* Phone width: iOS layout. The list and the Conversation are separate screens. */
 	@media (width < 45em) {
+		:root {
+			--conversation-bg: light-dark(white, black);
+			--received-bubble: light-dark(oklch(93.5% 0.003 286), oklch(32.2% 0.009 284)); /* iOS, measured */
+			--separator: light-dark(oklch(86.2% 0.007 286), oklch(23.7% 0 0)); /* iOS, measured */
+			--avatar-bg: linear-gradient(light-dark(oklch(72% 0.03 295), oklch(52% 0.04 295)), light-dark(oklch(60% 0.03 295), oklch(44% 0.04 295))); /* iOS, measured */
+		}
+
 		body {
 			grid-template-columns: 1fr;
 		}
 
-		nav {
-			background: var(--phone-list-bg);
-		}
-
-		nav h1 {
-			display: block;
-			margin: 0;
-			padding: 0.5rem 1rem 0.25rem;
-
-			font-size: 2.125rem;
-		}
-
-		main {
+		body:has(main[data-open]) nav,
+		body:not(:has(main[data-open])) main {
 			display: none;
 		}
 
+		nav {
+			background: var(--conversation-bg);
+
+			/* iOS 27 centers a small title, not a large one. */
+			h1 {
+				display: block;
+				margin: 0;
+				padding: 0.75rem 1rem 0.25rem;
+
+				font-size: 1.0625rem;
+				text-align: center;
+			}
+		}
+
 		#conversations a {
+			grid-template-columns: var(--unread-dot-size) var(--avatar-size) 1fr auto;
 			font-size: 1rem;
 			border-radius: 0;
 
@@ -197,6 +349,24 @@
 			.preview {
 				font-size: 0.9375rem;
 			}
+
+			.when::after {
+				content: " ›";
+			}
+		}
+
+		main header .back {
+			display: block;
+			padding-inline-end: 0.5rem;
+
+			font-size: 1.75rem;
+			line-height: 1;
+			color: var(--accent);
+			text-decoration: none;
+		}
+
+		#messages .bubble {
+			font-size: 1.0625rem;
 		}
 	}
 </style>
@@ -221,29 +391,55 @@
 		</li>
 	</template>
 
+	<template id="conversation-view">
+		<header>
+			<a class="back" href="#" aria-label="Back to Conversations">‹</a>
+			<h2></h2>
+		</header>
+		<ol id="messages" aria-live="polite"></ol>
+	</template>
+
 	<template id="person-glyph">
 		<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4.5"/><path d="M3 22c0-5 4-8 9-8s9 3 9 8z"/></svg>
 	</template>
 
 <script type="module">
 	const list = document.querySelector("#conversations");
+	const main = document.querySelector("main");
 	const status = document.querySelector("#status");
 	const rowTemplate = document.querySelector("#conversation-row");
+	const viewTemplate = document.querySelector("#conversation-view");
 	const personGlyph = document.querySelector("#person-glyph");
 
+	const conversations = new Map(); // id -> Conversation
+	const rows = new Map(); // id -> list row
 	const dayFormat = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+	const timeOfDay = (date) => date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
-	// Messages.app style: a time today, "Yesterday", a weekday within the week, else a date.
-	function formatWhen(date) {
+	function daysAgo(date) {
 		const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
-		const days = Math.round((startOfDay(new Date()) - startOfDay(date)) / 86_400_000);
-		if (days === 0) return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-		if (days === 1) {
-			const yesterday = dayFormat.format(-1, "day");
-			return yesterday[0].toUpperCase() + yesterday.slice(1);
-		}
+		return Math.round((startOfDay(new Date()) - startOfDay(date)) / 86_400_000);
+	}
+
+	function capitalized(text) {
+		return text[0].toUpperCase() + text.slice(1);
+	}
+
+	// Messages.app list style: a time today, "Yesterday", a weekday within the week, else a date.
+	function formatWhen(date) {
+		const days = daysAgo(date);
+		if (days === 0) return timeOfDay(date);
+		if (days === 1) return capitalized(dayFormat.format(-1, "day"));
 		if (days < 7) return date.toLocaleDateString([], { weekday: "long" });
 		return date.toLocaleDateString([], { year: "2-digit", month: "numeric", day: "numeric" });
+	}
+
+	// Messages.app divider style: "Today 12:26 AM", "Yesterday 8:13 AM", "Tuesday 3:00 PM", "Nov 2 at 3:00 PM".
+	function dividerParts(date) {
+		const days = daysAgo(date);
+		if (days < 2) return [capitalized(dayFormat.format(-days, "day")), timeOfDay(date)];
+		if (days < 7) return [date.toLocaleDateString([], { weekday: "long" }), timeOfDay(date)];
+		return [date.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" }), timeOfDay(date)];
 	}
 
 	// Initials for a name; a person glyph for a raw number, email, or short code.
@@ -276,24 +472,143 @@
 	}
 
 	// Previews need one request per Conversation, so they fill in after the list shows.
-	async function fillPreviews(rows) {
+	async function fillPreviews() {
 		const queue = [...rows];
 		const worker = async () => {
 			for (let entry = queue.shift(); entry; entry = queue.shift()) {
 				const [id, row] = entry;
 				const [last] = await getJSON(`/api/conversations/${id}/messages?limit=1`).catch(() => []);
-				row.querySelector(".preview").textContent = last?.text || (last ? "Attachment" : "");
+				row.querySelector(".preview").textContent = last ? last.text || last.placeholder || "" : "";
 			}
 		};
-		await Promise.all(Array.from({ length: 4 }, worker));
+		// Two workers leave two of imsg's four read lanes free, so opening a Conversation never waits behind previews.
+		await Promise.all(Array.from({ length: 2 }, worker));
+	}
+
+	// Text with clickable links; everything else stays plain text (never parsed as HTML).
+	function linkified(text) {
+		const fragment = document.createDocumentFragment();
+		let rest = 0;
+		for (const match of text.matchAll(/https?:\/\/[^\s<>"]+[^\s<>".,;:!?)\]]/g)) {
+			fragment.append(text.slice(rest, match.index));
+			const link = document.createElement("a");
+			link.href = match[0];
+			link.target = "_blank";
+			link.rel = "noopener noreferrer";
+			link.textContent = match[0];
+			fragment.append(link);
+			rest = match.index + match[0].length;
+		}
+		fragment.append(text.slice(rest));
+		return fragment;
+	}
+
+	const dividerGap = 60 * 60 * 1000; // a new time divider after an hour of silence
+
+	function renderMessages(conversation, messages) {
+		const items = [];
+		let previous;
+		for (const message of messages) {
+			const at = new Date(message.createdAt);
+			const newDivider = !previous || at - new Date(previous.createdAt) > dividerGap;
+			if (newDivider) {
+				const divider = document.createElement("li");
+				divider.className = "divider";
+				const [day, time] = dividerParts(at);
+				const bold = document.createElement("b");
+				bold.textContent = day;
+				divider.append(bold, ` ${time}`);
+				items.push(divider);
+			}
+			const newSender = newDivider || previous.fromMe !== message.fromMe || previous.sender !== message.sender;
+			if (conversation.isGroup && !message.fromMe && newSender) {
+				const sender = document.createElement("li");
+				sender.className = "sender";
+				sender.textContent = message.senderName;
+				items.push(sender);
+			}
+			items.push(renderMessage(conversation, message));
+			previous = message;
+		}
+		return items;
+	}
+
+	function renderMessage(conversation, message) {
+		const item = document.createElement("li");
+		item.className = "message";
+		item.classList.toggle("from-me", message.fromMe);
+		item.classList.toggle("imessage", conversation.service === "iMessage");
+		item.dataset.id = message.id;
+
+		const bubble = document.createElement("p");
+		bubble.className = "bubble";
+		if (message.text) bubble.append(linkified(message.text));
+		if (message.placeholder) {
+			const placeholder = document.createElement("span");
+			placeholder.className = "placeholder";
+			placeholder.textContent = message.placeholder;
+			bubble.append(placeholder);
+		}
+		if (message.reactions?.length) {
+			const tapbacks = document.createElement("span");
+			tapbacks.className = "tapbacks";
+			tapbacks.textContent = message.reactions.map((r) => r.emoji).join("");
+			tapbacks.title = message.reactions.map((r) => `${r.from}: ${r.emoji}`).join("\n");
+			bubble.append(tapbacks);
+		}
+		item.append(bubble);
+		if (message.edited) {
+			const edited = document.createElement("small");
+			edited.className = "edited";
+			edited.textContent = "Edited";
+			item.append(edited);
+		}
+		return item;
+	}
+
+	let openID = null;
+
+	async function openConversation(id) {
+		openID = id;
+		for (const [rowID, row] of rows) {
+			const link = row.querySelector("a");
+			if (rowID === id) link.setAttribute("aria-current", "page");
+			else link.removeAttribute("aria-current");
+		}
+		const conversation = conversations.get(id);
+		if (!conversation) {
+			main.removeAttribute("data-open");
+			main.replaceChildren(status);
+			status.textContent = "Select a Conversation";
+			return;
+		}
+		main.setAttribute("data-open", "");
+		main.replaceChildren(viewTemplate.content.cloneNode(true));
+		main.querySelector("h2").textContent = conversation.name;
+		const messages = await getJSON(`/api/conversations/${id}/messages`);
+		if (openID !== id) return; // the user opened another Conversation meanwhile
+		const list = main.querySelector("#messages");
+		list.replaceChildren(...renderMessages(conversation, messages));
+		list.scrollTop = list.scrollHeight;
+	}
+
+	function route() {
+		const match = location.hash.match(/^#\/conversations\/(\d+)$/);
+		openConversation(match ? Number(match[1]) : null).catch((error) => {
+			main.replaceChildren(status);
+			status.textContent = `Couldn't load the Conversation: ${error.message}`;
+		});
 	}
 
 	try {
-		const conversations = await getJSON("/api/conversations");
-		const rows = conversations.map((c) => [c.id, renderRow(c)]);
-		list.replaceChildren(...rows.map(([, row]) => row));
-		status.textContent = "Select a Conversation";
-		fillPreviews(rows);
+		for (const conversation of await getJSON("/api/conversations")) {
+			conversations.set(conversation.id, conversation);
+			rows.set(conversation.id, renderRow(conversation));
+		}
+		list.replaceChildren(...rows.values());
+		addEventListener("hashchange", route);
+		route();
+		fillPreviews();
 	} catch (error) {
 		status.textContent = `Couldn't load Conversations: ${error.message}`;
 	}
