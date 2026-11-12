@@ -15,7 +15,7 @@ KEEP = {
     "jsonrpc", "id", "method", "error", "message", "data", "supported_methods", "methods",
     "version", "service", "transport", "send_state", "uti", "mime_type", "kind", "type",
     "last_message_at", "created_at", "checked_at", "date_read", "date_delivered", "delivered_at",
-    "edited_at", "unsent_at", "emoji", "balloon_bundle_id", "bundle_id", "event", "event_type",
+    "edited_at", "unsent_at", "emoji", "reaction_emoji", "reaction_type", "balloon_bundle_id", "bundle_id", "event", "event_type",
 }
 HANDLE_KEYS = {
     "identifier", "participants", "last_addressed_handle", "sender", "destination_caller_id",

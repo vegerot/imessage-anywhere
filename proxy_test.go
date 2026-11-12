@@ -45,7 +45,7 @@ func runFakeImsg(transcriptPath, logPath string) {
 	}
 	keyByID := map[string]string{}
 	recorded := map[string]json.RawMessage{} // request key (method, or method#chat_id) -> first recorded response line
-	var notifications []json.RawMessage      // params.message of each "message" notification
+	var notifications []map[string]any       // every recorded subscription notification, in order
 	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
 		var rec struct{ Dir, Line string }
 		must(json.Unmarshal([]byte(line), &rec))
@@ -64,8 +64,10 @@ func runFakeImsg(transcriptPath, logPath string) {
 		switch {
 		case rec.Dir == "in":
 			keyByID[string(msg.ID)] = requestKey(msg.Method, msg.Params.ChatID)
-		case msg.Method == "message":
-			notifications = append(notifications, msg.Params.Message)
+		case msg.Method != "":
+			var n map[string]any
+			must(json.Unmarshal([]byte(rec.Line), &n))
+			notifications = append(notifications, n)
 		case msg.ID != nil:
 			key := keyByID[string(msg.ID)]
 			for _, k := range []string{key, strings.Split(key, "#")[0]} {
@@ -102,12 +104,13 @@ func runFakeImsg(transcriptPath, logPath string) {
 		case "watch.subscribe":
 			subscriptions++
 			reply(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": map[string]any{"subscription": subscriptions, "buffer_limit": 256}})
-			for _, m := range notifications {
-				var id struct{ ID int64 }
-				must(json.Unmarshal(m, &id))
-				if id.ID > req.Params.SinceRowID {
-					reply(map[string]any{"jsonrpc": "2.0", "method": "message", "params": map[string]any{"subscription": subscriptions, "message": m}})
+			for _, n := range notifications {
+				params := n["params"].(map[string]any)
+				if m, ok := params["message"].(map[string]any); ok && int64(m["id"].(float64)) <= req.Params.SinceRowID {
+					continue
 				}
+				params["subscription"] = subscriptions
+				reply(n)
 			}
 		case "watch.unsubscribe":
 			reply(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": map[string]any{"ok": true}})
@@ -183,6 +186,7 @@ func (p *proxyUnderTest) get(t *testing.T, path, remoteAddr string) *httptest.Re
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, path, nil)
 	req.RemoteAddr = remoteAddr
+	req.Host = "100.121.37.3:7171"
 	return p.do(t, req)
 }
 
@@ -334,7 +338,7 @@ func TestConversationMessagesAreOldestFirstAndDefaultToTheLast100(t *testing.T) 
 		t.Errorf("Message IDs = %v, want %v (oldest first)", ids, want)
 	}
 	last := got[len(got)-1]
-	want := Message{ID: 183576, ConversationID: 242, FromMe: true, Sender: "person0@example.com", Text: "🧪 imessage-proxy test (P0 rpc)", CreatedAt: "2026-11-12T08:27:59.322Z"}
+	want := Message{ID: 183576, GUID: "00000000-0000-0000-0000-000000000005", ConversationID: 242, FromMe: true, Sender: "person0@example.com", Text: "🧪 imessage-proxy test (P0 rpc)", CreatedAt: "2026-11-12T08:27:59.322Z"}
 	if fmt.Sprintf("%+v", last) != fmt.Sprintf("%+v", want) {
 		t.Errorf("newest Message = %+v\nwant %+v", last, want)
 	}
@@ -510,6 +514,7 @@ func (p *proxyUnderTest) postForm(t *testing.T, path string, form url.Values, he
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(form.Encode()))
 	req.RemoteAddr = tailnetAddr
+	req.Host = "100.121.37.3:7171"
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	for k, v := range header {
 		req.Header[k] = v
@@ -599,5 +604,100 @@ func TestNotReadyExplainsTheMissingFullDiskAccess(t *testing.T) {
 
 	if err == nil || !strings.Contains(err.Error(), "authorization denied") || !strings.Contains(err.Error(), "Full Disk Access") {
 		t.Errorf("Ready() = %v, want imsg's reason and how to grant Full Disk Access", err)
+	}
+}
+
+func TestLiveTapbacksPointAtTheirMessageAndContentlessRowsAreLeftOut(t *testing.T) {
+	p := startProxy(t, "imsg-0.21.0-03.jsonl")
+
+	byID := map[int64]Message{}
+	for _, e := range readEvents(t, p, "/api/events?since=183535", nil, 9) {
+		var m Message
+		must(json.Unmarshal([]byte(e.Data), &m))
+		byID[m.ID] = m
+	}
+
+	if target := byID[183536]; target.GUID != "00000000-0000-0000-0000-000000000001" {
+		t.Errorf("photo 183536 GUID = %q, want its GUID so tapbacks can find it", target.GUID)
+	}
+	tapback := byID[183537]
+	if tapback.ReactsTo != "00000000-0000-0000-0000-000000000001" || tapback.Tapback != "❤️" || tapback.SenderName != "Synthetic Name 1" || tapback.TapbackRemoved {
+		t.Errorf("tapback 183537 = %+v, want ❤️ from Synthetic Name 1 on 183536's GUID", tapback)
+	}
+	if m, ok := byID[183562]; ok {
+		t.Errorf("whitespace-only Message 183562 was streamed: %+v", m)
+	}
+	if subs := p.imsgRequests(t, "watch.subscribe"); len(subs) != 1 || subs[0]["include_reactions"] != true {
+		t.Errorf("watch.subscribe requests = %v, want include_reactions: true", subs)
+	}
+}
+
+func TestAFailedWatchEndsTheStreamSoTheBrowserReconnects(t *testing.T) {
+	p := startProxy(t, "synthetic-watch-error.jsonl")
+
+	start := time.Now()
+	events := readEvents(t, p, "/api/events", nil, 1)
+
+	if len(events) != 0 || time.Since(start) > 3*time.Second {
+		t.Errorf("got %v after %v; want the stream to end promptly with no events", events, time.Since(start))
+	}
+}
+
+// A page on another site whose DNS name rebinds to the Host Mac's address would otherwise
+// pass both the source filter and the cross-origin check.
+func TestRequestsForOtherHostNamesAreRefused(t *testing.T) {
+	p := startProxy(t, "imsg-0.21.0-01.jsonl")
+
+	for _, tc := range []struct {
+		host string
+		want int
+	}{
+		{"evil.example:7171", http.StatusForbidden},
+		{"100.121.37.3:7171", http.StatusOK},
+		{"127.0.0.1:7171", http.StatusOK},
+		{"localhost:7171", http.StatusOK},
+		{"work-macbook:7171", http.StatusOK},
+		{"work-macbook.tail1234.ts.net:7171", http.StatusOK},
+	} {
+		req := httptest.NewRequest(http.MethodGet, "/api/conversations", nil)
+		req.RemoteAddr = tailnetAddr
+		req.Host = tc.host
+		if got := p.do(t, req).Code; got != tc.want {
+			t.Errorf("Host %s: status %d, want %d", tc.host, got, tc.want)
+		}
+	}
+}
+
+func waitForDone(t *testing.T, e *Engine) bool {
+	t.Helper()
+	select {
+	case <-e.Done():
+		return true
+	case <-time.After(3 * time.Second):
+		return false
+	}
+}
+
+// A send still in flight blocks imsg's send queue until the child restarts; the Proxy
+// exits so launchd restarts it, and a send refused by the blocked queue never ran.
+func TestABlockedSendQueueIsNotSentAndRestartsImsg(t *testing.T) {
+	p := startProxy(t, "synthetic-send-lane-blocked.jsonl")
+
+	if got := p.postForm(t, "/api/conversations/242/messages", url.Values{"text": {"🧪 hi"}}, nil).Code; got != http.StatusBadGateway {
+		t.Errorf("status %d, want 502 (the blocked queue refused it before sending)", got)
+	}
+	if !waitForDone(t, p.engine) {
+		t.Error("imsg wasn't restarted; its send queue stays blocked")
+	}
+}
+
+func TestAStillInFlightSendIsUnconfirmedAndRestartsImsg(t *testing.T) {
+	p := startProxy(t, "synthetic-send-still-in-flight.jsonl")
+
+	if got := decode[sendReply](t, p.postForm(t, "/api/conversations/242/messages", url.Values{"text": {"🧪 hi"}}, nil)); got.Status != "unconfirmed" {
+		t.Errorf("reply = %+v, want unconfirmed", got)
+	}
+	if !waitForDone(t, p.engine) {
+		t.Error("imsg wasn't restarted; its send queue stays blocked")
 	}
 }

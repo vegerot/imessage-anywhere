@@ -159,3 +159,20 @@ Next:
 
 Next:
 - Fix the 10 code-review findings (test-first where they cross the seam), then ticket 05's experiment.
+
+## 2026-11-12 — 🔍 Code review fixes (/code-review high, 10 findings, all fixed)
+
+1. A blocked imsg send queue (`-32004`, after a send left `still_in_flight`) made every later send say "unconfirmed" and nothing went out until a manual restart. Now `-32004` is "not sent" (it never ran) and closes the Engine, as does a `-32001` with `still_in_flight`, so the Proxy exits and launchd restarts imsg. Tests: lane blocked → 502 + Done; still in flight → unconfirmed + Done.
+2. imsg's terminal `error` notification (method `error`, shape from RPCServer+WatchHandlers.swift) left the stream open but deaf behind heartbeats. Now it ends the subscription like `watch.overflow`; the browser reconnects. Test: the stream ends promptly.
+3. DNS rebinding could pass both the source filter and cross-origin protection. Now the Host must be an IP literal, `localhost`, `work-macbook`, or `*.ts.net`. Test, plus live from Windows: tailnet by IP 200, `Host: evil.example` 403.
+4. Live tapbacks never arrived (imsg drops reaction rows unless `include_reactions`). Now the watch includes them; a tapback streams as its own event (`reactsTo` = target GUID, `tapback`, `tapbackRemoved`) and the page attaches it to the target bubble; Messages carry `guid`. Test on a real recorded transcript (`testdata/imsg-0.21.0-03.jsonl`: ❤️❤️ on photo 183536). Not yet seen live (no tapback happened during testing).
+5. The live stream forwarded contentless rows that history leaves out. One shared `visible()` rule now covers both. Test with real row 183562.
+6. Live edits/unsends of old Messages rewrote the list preview and marked unread. Now only new rows (ID past the newest seen) touch the preview, order, and unread mark.
+7. An unconfirmed pending bubble whose row arrived late stayed as a duplicate with its warning. Now a late row takes over a pending bubble that's "sending" or "unconfirmed" (compared on trimmed text).
+8. A browser leaving mid-subscribe could leak an imsg subscription (imsg allows 64). `watch.subscribe` now runs uncancellable, and the caller always unsubscribes. No test: depends on exact timing.
+9. Live events for Conversations outside the list each reloaded the list and 100 previews. Now at most one reload runs, only for new rows; preview filling runs one at a time and skips filled rows.
+10. The first subscription started at the tail only after loading, so a Message in between was lost. Now the page subscribes first and holds early events until the list exists.
+
+- 🧪 23 seam tests pass. The sanitizer also keeps `reaction_emoji`/`reaction_type`. Three more synthetic transcripts (watch error, lane blocked, still in flight), shaped from imsg's source, since those failures can't be produced on purpose.
+- ✅ Redeployed through the launchd agent (the re-signed build kept its grant again); page shows the Conversation in 1.0 s; a live Message arrived with its echo and no duplicates; no console errors.
+- 🧭 Max asked about `/#/` vs clean paths and leans toward clean paths; compared in chat. Next: clean paths with `pushState`/`popstate` (modern-web-guidance `stack-drill-down`) and a same-document View Transition with focus routing (`same-document-transitions`).

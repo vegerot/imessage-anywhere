@@ -59,6 +59,12 @@ type rpcError struct {
 	Data    any    `json:"data"`
 }
 
+func (e *rpcError) disposition() string {
+	data, _ := e.Data.(map[string]any)
+	d, _ := data["disposition"].(string)
+	return d
+}
+
 func (e *rpcError) Error() string {
 	return fmt.Sprintf("imsg: %s (code %d, %v)", e.Message, e.Code, e.Data)
 }
@@ -119,9 +125,11 @@ func (e *Engine) readLoop(stdout io.Reader) {
 		}
 		switch msg.Method {
 		case "message":
-			e.deliver(msg.Params.Subscription, msg.Params.Message.toMessage())
+			if m := msg.Params.Message.toMessage(); m.visible() {
+				e.deliver(msg.Params.Subscription, m)
+			}
 			continue
-		case "watch.overflow":
+		case "watch.overflow", "error": // both end that subscription; the browser reconnects
 			e.dropSubscription(msg.Params.Subscription)
 			continue
 		}
@@ -218,11 +226,13 @@ func (e *Engine) request(ctx context.Context, method string, params any, subscri
 // Subscribe streams new Messages from all Conversations, starting after row sinceRowID,
 // or at the current tail when sinceRowID is 0.
 func (e *Engine) Subscribe(ctx context.Context, sinceRowID int64) (*Subscription, error) {
-	params := map[string]any{"attachments": true}
+	params := map[string]any{"attachments": true, "include_reactions": true}
 	if sinceRowID > 0 {
 		params["since_rowid"] = sinceRowID
 	}
-	resp, err := e.request(ctx, "watch.subscribe", params, true)
+	// Uncancellable: if the browser left mid-call, the caller still gets the subscription and
+	// unsubscribes it; a cancelled call would leak it inside imsg (which allows only 64).
+	resp, err := e.request(context.WithoutCancel(ctx), "watch.subscribe", params, true)
 	if err != nil {
 		return nil, err
 	}
@@ -319,6 +329,7 @@ func formatHandle(handle string) string {
 // Message is one item sent or received in a Conversation, as the page sees it.
 type Message struct {
 	ID             int64      `json:"id"`
+	GUID           string     `json:"guid"`
 	ConversationID int64      `json:"conversationId"`
 	FromMe         bool       `json:"fromMe"`
 	Sender         string     `json:"sender"`
@@ -330,6 +341,16 @@ type Message struct {
 	// Placeholder names what the page can't show yet (attachments, polls, app messages,
 	// unsent Messages), so nothing vanishes silently.
 	Placeholder string `json:"placeholder,omitempty"`
+	// A tapback arriving live is its own row pointing at the Message it reacts to.
+	ReactsTo       string `json:"reactsTo,omitempty"`
+	Tapback        string `json:"tapback,omitempty"`
+	TapbackRemoved bool   `json:"tapbackRemoved,omitempty"`
+}
+
+// visible says whether a Message has anything to show; whitespace-only rows (seen in the
+// wild) are left out of history and the live stream alike.
+func (m Message) visible() bool {
+	return m.Text != "" || m.Placeholder != "" || len(m.Reactions) > 0 || m.ReactsTo != ""
 }
 
 // Reaction is a tapback on a Message.
@@ -341,6 +362,7 @@ type Reaction struct {
 
 type imsgMessage struct {
 	ID              int64  `json:"id"`
+	GUID            string `json:"guid"`
 	ChatID          int64  `json:"chat_id"`
 	IsFromMe        bool   `json:"is_from_me"`
 	Sender          string `json:"sender"`
@@ -350,6 +372,10 @@ type imsgMessage struct {
 	EditedAt        string `json:"edited_at"`
 	UnsentAt        string `json:"unsent_at"`
 	BalloonBundleID string `json:"balloon_bundle_id"`
+	IsReaction      bool   `json:"is_reaction"`
+	ReactionEmoji   string `json:"reaction_emoji"`
+	IsReactionAdd   bool   `json:"is_reaction_add"`
+	ReactedToGUID   string `json:"reacted_to_guid"`
 	Poll            *struct {
 		Kind     string `json:"kind"`
 		Question string `json:"question"`
@@ -376,6 +402,7 @@ const objectReplacement = "\ufffc"
 func (m imsgMessage) toMessage() Message {
 	msg := Message{
 		ID:             m.ID,
+		GUID:           m.GUID,
 		ConversationID: m.ChatID,
 		FromMe:         m.IsFromMe,
 		Sender:         m.Sender,
@@ -386,6 +413,11 @@ func (m imsgMessage) toMessage() Message {
 	}
 	if !m.IsFromMe {
 		msg.SenderName = nameOr(m.SenderName, m.Sender)
+	}
+	if m.IsReaction {
+		msg.Text, msg.Placeholder = "", "" // its text is a summary like "Loved an image"
+		msg.ReactsTo, msg.Tapback, msg.TapbackRemoved = m.ReactedToGUID, m.ReactionEmoji, !m.IsReactionAdd
+		return msg
 	}
 	for _, r := range m.Reactions {
 		msg.Reactions = append(msg.Reactions, Reaction{Emoji: r.Emoji, From: nameOr(r.SenderName, r.Sender), FromMe: r.IsFromMe})
@@ -463,7 +495,7 @@ func (e *Engine) Messages(ctx context.Context, conversationID int64, limit int) 
 	}
 	messages := make([]Message, 0, len(result.Messages))
 	for _, m := range slices.Backward(result.Messages) { // imsg returns newest first
-		if msg := m.toMessage(); msg.Text != "" || msg.Placeholder != "" || len(msg.Reactions) > 0 {
+		if msg := m.toMessage(); msg.visible() {
 			messages = append(messages, msg)
 		}
 	}
@@ -503,8 +535,17 @@ func (e *Engine) Send(ctx context.Context, conversationID int64, text string) (S
 		return SendResult{Status: "unconfirmed"}, nil
 	case errors.Is(err, errEngineGone):
 		return SendResult{Status: "unconfirmed"}, nil
-	case errors.As(err, &rpcErr) && (rpcErr.Code == imsgOutcomeUnknown || rpcErr.Code == imsgLaneBlocked):
+	case errors.As(err, &rpcErr) && rpcErr.Code == imsgLaneBlocked:
+		// An earlier send is still in flight, so imsg refuses sends until its child restarts.
+		// This one never ran. Exiting lets launchd restart everything.
+		fmt.Fprintf(os.Stderr, "engine: imsg's send queue is blocked; restarting: %v\n", rpcErr)
+		go e.Close()
+		return SendResult{}, fmt.Errorf("%w: %v", errNotSent, rpcErr)
+	case errors.As(err, &rpcErr) && rpcErr.Code == imsgOutcomeUnknown:
 		fmt.Fprintf(os.Stderr, "engine: send to %d unconfirmed: %v\n", conversationID, rpcErr)
+		if rpcErr.disposition() == "still_in_flight" {
+			go e.Close() // imsg now blocks further sends until its child restarts
+		}
 		return SendResult{Status: "unconfirmed"}, nil
 	default:
 		return SendResult{}, fmt.Errorf("%w: %v", errNotSent, err)

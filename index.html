@@ -559,16 +559,35 @@
 	// flight a 0.5 s history read took 2.75 s (measured 2026-11-12).
 	let conversationLoading = Promise.resolve();
 
-	// Previews need one request per Conversation, so they fill in after the list shows.
-	async function fillPreviews() {
-		const queue = [...rows];
+	// Previews need one request per Conversation, so they fill in after the list shows. One
+	// fill runs at a time; a fill requested meanwhile runs after it (e.g. after a list reload).
+	let filling = null;
+	let fillAgain = false;
+
+	function fillPreviews() {
+		if (filling) {
+			fillAgain = true;
+			return;
+		}
+		filling = fillOnce().finally(() => {
+			filling = null;
+			if (fillAgain) {
+				fillAgain = false;
+				fillPreviews();
+			}
+		});
+	}
+
+	async function fillOnce() {
+		const queue = [...rows.keys()];
 		const worker = async () => {
-			for (let entry = queue.shift(); entry; entry = queue.shift()) {
+			for (let id = queue.shift(); id !== undefined; id = queue.shift()) {
 				await conversationLoading;
-				const [id, row] = entry;
+				const row = rows.get(id);
+				if (!row || row.querySelector(".preview").textContent) continue; // gone, or filled live
 				const [last] = await getJSON(`/api/conversations/${id}/messages?limit=1`).catch(() => []);
 				if (last) noteSeen(last);
-				row.querySelector(".preview").textContent = last ? last.text || last.placeholder || "" : "";
+				row.querySelector(".preview").textContent = last ? previewText(last) : "";
 			}
 		};
 		// Two workers leave two of imsg's four read lanes free, so opening a Conversation never waits behind previews.
@@ -761,34 +780,62 @@
 		}
 	}
 
+	let reloading = null;
+
+	function previewText(message) {
+		if (message.reactsTo) return `${message.fromMe ? "You" : message.senderName} reacted ${message.tapback}`;
+		return message.text || message.placeholder || "";
+	}
+
 	// A new or changed Message arrived live: update its row, and the open Conversation.
-	async function applyLiveMessage(message) {
+	// isNew is false for edits and unsends, which reuse an older row ID.
+	async function applyLiveMessage(message, isNew) {
 		const id = message.conversationId;
-		const conversation = conversations.get(id);
-		if (!conversation) {
-			await loadConversations(); // a Conversation the list doesn't have yet
-			fillPreviews();
-			return;
+		if (!conversations.has(id)) {
+			// Outside the list: only a new row can bring it into the newest 100. One reload at a time.
+			if (!isNew) return;
+			reloading ??= loadConversations().finally(() => {
+				reloading = null;
+				fillPreviews();
+			});
+			await reloading;
+			if (!conversations.has(id)) return;
 		}
+		const conversation = conversations.get(id);
 		const row = rows.get(id);
-		row.querySelector(".preview").textContent = message.text || message.placeholder || "";
-		if (message.createdAt >= conversation.lastMessageAt) {
+		if (isNew && message.createdAt >= conversation.lastMessageAt) {
 			conversation.lastMessageAt = message.createdAt;
 			const when = row.querySelector(".when");
 			when.dateTime = message.createdAt;
 			when.textContent = formatWhen(new Date(message.createdAt));
+			row.querySelector(".preview").textContent = previewText(message);
 			list.prepend(row);
+			if (!message.fromMe && openID !== id) row.toggleAttribute("data-unread", true);
 		}
-		if (!message.fromMe && openID !== id) row.toggleAttribute("data-unread", true);
 		if (openID !== id) return;
+		if (message.reactsTo) {
+			applyTapback(conversation, message);
+			return;
+		}
 		let index = openMessages.findIndex((m) => m.id === message.id);
 		if (index < 0 && message.fromMe) {
-			// My own send, arriving live before the POST answered: it takes over the pending bubble.
-			index = openMessages.findIndex((m) => m.delivery === "sending" && m.text === message.text);
+			// My own send arriving live, before the POST answered or after it came back
+			// unconfirmed (it was delivered after all): it takes over the pending bubble.
+			index = openMessages.findIndex((m) => (m.delivery === "sending" || m.delivery === "unconfirmed") && m.text.trim() === message.text);
 		}
 		if (index >= 0) openMessages[index] = message; // an edit, a replay, or a send confirmed live
 		else openMessages.push(message);
 		showMessages(conversation, { scrollToEnd: message.fromMe });
+	}
+
+	// A tapback is its own row pointing at the Message it reacts to (by GUID).
+	function applyTapback(conversation, tapback) {
+		const target = openMessages.find((m) => m.guid === tapback.reactsTo);
+		if (!target) return; // reacting to a Message older than the 100 shown
+		const from = tapback.fromMe ? "You" : tapback.senderName;
+		target.reactions = (target.reactions ?? []).filter((r) => !(r.from === from && r.emoji === tapback.tapback));
+		if (!tapback.tapbackRemoved) target.reactions.push({ emoji: tapback.tapback, from, fromMe: tapback.fromMe });
+		showMessages(conversation, { scrollToEnd: false });
 	}
 
 	const connection = document.querySelector("#connection");
@@ -811,8 +858,10 @@
 		source.addEventListener("message", (event) => {
 			resetWatchdog();
 			const message = JSON.parse(event.data);
+			const isNew = message.id > lastEventID;
 			noteSeen(message);
-			applyLiveMessage(message);
+			if (listReady) applyLiveMessage(message, isNew);
+			else early.push([message, isNew]);
 		});
 		resetWatchdog();
 	}
@@ -845,12 +894,19 @@
 		rows.get(openID)?.querySelector("a").setAttribute("aria-current", "page");
 	}
 
+	// Subscribe before loading, so a Message arriving meanwhile isn't lost; hold it until the
+	// list exists.
+	let listReady = false;
+	const early = [];
+
 	try {
+		connect();
 		await loadConversations();
+		listReady = true;
+		for (const [message, isNew] of early.splice(0)) applyLiveMessage(message, isNew);
 		addEventListener("hashchange", route);
 		route();
 		fillPreviews();
-		connect();
 	} catch (error) {
 		status.textContent = `Couldn't load Conversations: ${error.message}`;
 	}

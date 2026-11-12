@@ -1,0 +1,2 @@
+{"t": 0, "dir": "in", "line": "{\"jsonrpc\": \"2.0\", \"id\": \"send\", \"method\": \"send\", \"params\": {\"chat_id\": 242, \"text\": \"🧪 hi\", \"transport\": \"applescript\"}}"}
+{"t": 0.01, "dir": "out", "line": "{\"jsonrpc\": \"2.0\", \"id\": \"send\", \"error\": {\"code\": -32004, \"message\": \"Mutation lane blocked\", \"data\": {\"retry_safe\": false, \"disposition\": \"still_in_flight\", \"transport\": \"applescript\", \"operation\": \"send\", \"detail\": \"A prior send remains in flight. Restart the RPC child before sending another mutation.\"}}}"}

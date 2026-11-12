@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"net/netip"
 	"strconv"
@@ -41,12 +42,31 @@ func NewServer(engine *Engine) http.Handler {
 // node, tailnet callers keep their own 100.x address.
 var tailnet = netip.MustParsePrefix("100.64.0.0/10")
 
+// allowedHost refuses DNS rebinding: a page on another site whose name rebinds to the Host
+// Mac's address would otherwise pass the source filter and the cross-origin check. Its
+// requests carry that site's name; mine carry an IP address, localhost, or a tailnet name.
+func allowedHost(hostPort string) bool {
+	host := hostPort
+	if h, _, err := net.SplitHostPort(hostPort); err == nil {
+		host = h
+	}
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	if _, err := netip.ParseAddr(strings.Trim(host, "[]")); err == nil {
+		return true
+	}
+	return host == "localhost" || host == "work-macbook" || strings.HasSuffix(host, ".ts.net")
+}
+
 // ServeHTTP refuses every caller except my tailnet devices and the Host Mac itself.
 func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	addrPort, err := netip.ParseAddrPort(r.RemoteAddr)
 	addr := addrPort.Addr().Unmap()
 	if err != nil || !(tailnet.Contains(addr) || addr.IsLoopback()) {
 		http.Error(w, "only tailnet devices may connect", http.StatusForbidden)
+		return
+	}
+	if !allowedHost(r.Host) {
+		http.Error(w, "unknown host name", http.StatusForbidden)
 		return
 	}
 	s.handler.ServeHTTP(w, r)
