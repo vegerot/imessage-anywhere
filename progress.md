@@ -62,3 +62,10 @@ Next:
 
 Next:
 - `/to-tickets`, then P1.
+
+## 2026-11-12 — Tickets
+
+- 🎫 Ran `/to-tickets`: added `## Work: iMessage Anywhere v1.0` to `plan.md` with eight slices (01 Conversation list → 02 Read → 03 Live → 04 Send; 05 Attachments and 06 Contact names after 02; 07 Always running after 01; 08 shakedown week after all). Max delegated the three breakdown calls: the launchd Full Disk Access probe moved from 01 to 07, 04 stays blocked by 03 so duplicate-bubble merging is designed once, and no slices were merged or split.
+
+Next:
+- Start 01 (the only ready slice besides 07).

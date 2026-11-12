@@ -185,3 +185,89 @@ A Proxy on the Host Mac serves one web page to any Client on my tailnet. In it I
 - The P0 transcripts double as the reference for what imsg 0.21.0 really returns; record them before writing the Engine client.
 - The biggest unverified risks are Full Disk Access (corporate device management may block it; a grant may not survive a rebuild or hold under launchd) and HEIC display. P0 and P1 test them first.
 - "Contact" isn't in `GLOSSARY.md` yet; add it when P6 settles what a contact name means for handles shared by several people.
+
+## Work: iMessage Anywhere v1.0
+
+Slices of the spec above, in dependency order. A slice is ready when every slice in its **Blocked by** line has a `✅ NN` entry in `progress.md`; the lowest-numbered ready slice goes first. Every slice also meets these shared criteria:
+
+- Seam tests (the whole Proxy, HTTP in and JSON-RPC out, against a fake replaying recorded `imsg rpc` transcripts) cover the slice's behaviour; new transcripts are recorded on the Host Mac and sanitized before they're committed.
+- A manual end-to-end check passes on `maxs-pc` and on the Android phone over the tailnet, using a "🧪 imessage-anywhere test" Message where sending is involved, and is recorded in `progress.md`.
+- The UI the slice adds is compared side by side with Messages.app (macOS at desktop width, iOS at phone width) and the findings saved under `style-notes/`; it works at phone width and in light and dark mode.
+
+### 01. Conversation list in a browser
+
+**What to build:** From `maxs-pc`, opening the Host Mac's tailnet address in a browser shows my Conversations, newest activity first, each with its name, last-Message preview, time, Service badge, and unread mark. This is the walking skeleton: Go Proxy, Engine client, HTTP layer, embedded page, and the test seam.
+**Blocked by:** None
+**Acceptance criteria:**
+- The Proxy listens only on the WireGuard tunnel address and refuses callers outside `100.64.0.0/10`; a seam test proves the refusal.
+- The Engine client runs one long-lived `imsg rpc` child, refuses to start on an imsg version other than the pinned one, and restarts the child when it exits; seam tests prove both.
+- The Conversation list matches what Messages.app shows for the same Conversations (spot-check of at least five, including an SMS one and a group).
+- The replay fake fails a test when the Proxy sends a request its transcript doesn't cover.
+- Rebuilding the Proxy with `go build` and running it again from the terminal still reads the Messages database (the Full Disk Access grant survives a rebuild), recorded in `progress.md`.
+
+### 02. Read a Conversation
+
+**What to build:** Choosing a Conversation shows its history the way Messages.app does: my Messages and others' in opposite bubbles coloured by Service, sender labels in groups, time grouping, clickable links, and a placeholder for each Message type the Proxy can't show yet. Older Messages load as I scroll back. At phone width the list and the Conversation are separate screens with a back button.
+**Blocked by:** 01
+**Acceptance criteria:**
+- History pages backwards without gaps or repeats across page boundaries; a seam test proves it.
+- A group Conversation labels each Message with its sender.
+- Tapbacks, stickers, polls, and edited or unsent Messages show a placeholder, never vanish silently.
+- Emoji and non-Latin text render correctly.
+
+### 03. Live Messages
+
+**What to build:** New Messages appear in the open Conversation within a few seconds and the Conversation list reorders, in every open tab and Client. When the Host Mac goes offline the page says so, and it recovers on its own when the Host Mac is back.
+**Blocked by:** 02
+**Acceptance criteria:**
+- Live updates use Server-Sent Events whose event ID is the Message's database row ID; after a dropped connection the browser's `Last-Event-ID` resumes with no missed or duplicated Messages, proven by a seam test.
+- Several simultaneous subscribers all receive each Message while the Proxy holds a single imsg subscription.
+- After the imsg child restarts, its subscription resumes from the last delivered row ID.
+- Messages sent from the iPhone or the Host Mac appear too.
+
+### 04. Send text
+
+**What to build:** A text box at the bottom of an open Conversation sends text into it, 1:1 or group, over that Conversation's own Service. The new bubble shows "sending", then "sent" once confirmed; a send that can't be confirmed shows a warning instead.
+**Blocked by:** 03
+**Acceptance criteria:**
+- Every send asks imsg for the AppleScript transport; a seam test proves it.
+- Confirmation comes from `send`'s own result, not from an immediate send-status check (which reports `pending` too early, per P0).
+- An unconfirmed send (imsg's `may_have_completed`) shows a warning and is never retried automatically.
+- The sent bubble and the live stream's copy of the same row, plus the received echo in a note-to-self Conversation, end up as one bubble each, never duplicates.
+- On desktop, Enter sends and Shift+Enter inserts a new line.
+
+### 05. Attachments
+
+**What to build:** Received images show inline in the Conversation, including iPhone HEIC photos in Chrome. Other attachments show as a named item I can open or download. An attachment that lives only in iCloud says so.
+**Blocked by:** 02
+**Acceptance criteria:**
+- The Proxy serves attachment files from the Host Mac only for attachments imsg reported, never an arbitrary path.
+- File types come from `uti` and `transfer_name`, never `mime_type` (empty in history reads, per P0).
+- A HEIC photo displays in Chrome on `maxs-pc` and on the Android phone.
+- Attachments with the `missing` flag show an "in iCloud" placeholder.
+
+### 06. Contact names
+
+**What to build:** Contact names replace phone numbers and emails in the Conversation list, the Conversation header, and group sender labels; a handle with no contact still shows the raw number or email.
+**Blocked by:** 02
+**Acceptance criteria:**
+- The permission path is decided and recorded in `plan.md`: macOS's Contacts permission, or reading the AddressBook database under Full Disk Access.
+- **Contact** is defined in `GLOSSARY.md`.
+- A seam test covers both a named handle and an unnamed one.
+
+### 07. Always running
+
+**What to build:** The Proxy starts at login and stays running without a terminal, and tells me clearly at startup when a permission it needs is missing.
+**Blocked by:** 01
+**Acceptance criteria:**
+- A launchd agent starts the Proxy at login and restarts it if it exits.
+- Started by launchd, the Proxy reads the Messages database and can send; which process macOS attributes Full Disk Access and Automation to is recorded in `progress.md`.
+- With Full Disk Access or Automation missing, the Proxy logs which permission is missing and how to grant it.
+
+### 08. v1.0 shakedown week
+
+**What to build:** The "Done when" test: a week of daily use from `maxs-pc` and the Android phone without falling back to the Mac or iPhone for Messages.
+**Blocked by:** 03, 04, 05, 06, 07
+**Acceptance criteria:**
+- A daily `progress.md` note for seven days, each naming any fallback to the Mac or iPhone and why.
+- Each problem found becomes a new slice in this section.
