@@ -118,3 +118,14 @@ Next:
 
 Next:
 - Ticket 04 (Send text).
+
+## 2026-11-12 — ✅ 04 Send text
+
+- ✉️ `POST /api/conversations/<id>/messages` (a plain form post) sends text into the Conversation by `chat_id` with `transport: "applescript"`. imsg's confirmed result (the outgoing row's ID) is the confirmation. Unconfirmed (`-32001` delivery outcome unknown, `-32004` lane blocked, imsg exiting mid-send, or `ok` without a row) is reported and never retried; anything else (e.g. `-32603` not started) is 502, certainly not sent. Once written to imsg, a send ignores the browser disconnecting (`context.WithoutCancel`).
+- 🛡️ `http.NewCrossOriginProtection()` refuses cross-origin POSTs: otherwise any website open on a tailnet device could submit a hidden form and send Messages as me.
+- 💬 Page: a composer (`field-sizing: content`, placeholder "iMessage" or "Text Message • SMS/RCS"), Enter sends and Shift+Enter adds a line on fine-pointer devices, a pending bubble shows "Sending…", then either the real row or a warning ("Not confirmed. Check Messages before resending." / "Not sent."). The live event for my own send usually arrives before the POST answers and takes over the pending bubble.
+- 🧪 Seam tests: 16 pass. New: send targets chat_id over AppleScript and returns the row ID; unconfirmed is reported with exactly one send; not-started is 502; whitespace-only text isn't sent; cross-site POSTs are 403 with no send. The two error transcripts are synthetic (`testdata/synthetic-send-*.jsonl`), shaped from imsg 0.21.0's `deliveryFailure`, because those failures can't be produced on purpose.
+- ✅ Checked live in Chrome: typed "🧪 imessage-anywhere test (04 typed in the page)" + Enter in the note-to-self Conversation; it became row 183584 (`is_from_me=1`, `error=0`, `is_delivered=1`, chat 242) with its echo 183585 and no duplicate bubble; Shift+Enter inserted a newline without sending; a stubbed unconfirmed reply (no real send) showed the warning. Not checked live: sending into a group (the only groups are real family/friends Conversations).
+
+Next:
+- Ticket 05 (Attachments: find out, then build) or 07 (Always running); both are ready.

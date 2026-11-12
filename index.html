@@ -321,6 +321,68 @@
 		}
 	}
 
+	main {
+		grid-template-rows: auto 1fr auto;
+	}
+
+	.composer {
+		display: grid;
+		grid-template-columns: 1fr auto;
+		align-items: end;
+		padding: 0.5rem var(--gutter) 0.75rem;
+		gap: 0.5rem;
+
+		textarea {
+			field-sizing: content;
+			max-block-size: 8lh;
+			padding: 0.375rem 0.875rem;
+
+			font: inherit;
+			font-size: 1rem;
+			color: inherit;
+
+			background: transparent;
+			border: 1px solid var(--separator);
+			border-radius: 1.125rem;
+			resize: none;
+		}
+
+		button {
+			inline-size: 2rem;
+			aspect-ratio: 1;
+			padding: 0;
+
+			font-size: 1.125rem;
+			font-weight: 700;
+			color: white;
+
+			background: var(--imessage-bubble);
+			border: 0;
+			border-radius: 50%;
+
+			cursor: pointer;
+		}
+
+		&:has(textarea:placeholder-shown) button {
+			opacity: 0.4;
+		}
+	}
+
+	main:not(.imessage) .composer button {
+		background: var(--sms-bubble);
+	}
+
+	#messages .delivery {
+		padding-inline: 0.75rem;
+
+		font-size: 0.6875rem;
+		color: var(--secondary-text);
+
+		&.warning {
+			color: oklch(62% 0.2 30);
+		}
+	}
+
 	/* Phone width: iOS layout. The list and the Conversation are separate screens. */
 	@media (width < 45em) {
 		:root {
@@ -415,6 +477,10 @@
 			<h2></h2>
 		</header>
 		<ol id="messages" aria-live="polite"></ol>
+		<form class="composer">
+			<textarea name="text" rows="1" required aria-label="Message" enterkeyhint="send"></textarea>
+			<button aria-label="Send">↑</button>
+		</form>
 	</template>
 
 	<template id="person-glyph">
@@ -581,6 +647,14 @@
 			bubble.append(tapbacks);
 		}
 		item.append(bubble);
+		const delivery = deliveryLabels[message.delivery];
+		if (delivery) {
+			const label = document.createElement("small");
+			label.className = "delivery";
+			label.classList.toggle("warning", message.delivery !== "sending");
+			label.textContent = delivery;
+			item.append(label);
+		}
 		if (message.edited) {
 			const edited = document.createElement("small");
 			edited.className = "edited";
@@ -589,6 +663,16 @@
 		}
 		return item;
 	}
+
+	// What the page shows under a bubble I'm sending. "unconfirmed" may have been delivered,
+	// so it's never resent automatically.
+	const deliveryLabels = {
+		sending: "Sending…",
+		unconfirmed: "Not confirmed. Check Messages before resending.",
+		failed: "Not sent.",
+	};
+	let pendingCount = 0;
+	const sendsOnEnter = matchMedia("(pointer: fine)").matches; // desktop, like Messages.app
 
 	let openID = null;
 	let openMessages = [];
@@ -615,6 +699,8 @@
 		main.setAttribute("data-open", "");
 		main.replaceChildren(viewTemplate.content.cloneNode(true));
 		main.querySelector("h2").textContent = conversation.name;
+		main.classList.toggle("imessage", conversation.service === "iMessage");
+		setUpComposer(conversation);
 		const loading = getJSON(`/api/conversations/${id}/messages`);
 		conversationLoading = loading.catch(() => {});
 		const messages = await loading;
@@ -629,6 +715,50 @@
 		const nearEnd = list.scrollHeight - list.scrollTop - list.clientHeight < 80;
 		list.replaceChildren(...renderMessages(conversation, openMessages));
 		if (scrollToEnd || nearEnd) list.scrollTop = list.scrollHeight;
+	}
+
+	function setUpComposer(conversation) {
+		const form = main.querySelector(".composer");
+		const textarea = form.elements.text;
+		textarea.placeholder = conversation.service === "iMessage" ? "iMessage" : `Text Message • ${conversation.service}`;
+		textarea.addEventListener("keydown", (event) => {
+			if (sendsOnEnter && event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+				event.preventDefault();
+				form.requestSubmit();
+			}
+		});
+		form.addEventListener("submit", async (event) => {
+			event.preventDefault();
+			const text = textarea.value;
+			textarea.value = "";
+			const pending = { id: `pending-${++pendingCount}`, fromMe: true, text, createdAt: new Date().toISOString(), delivery: "sending" };
+			openMessages.push(pending);
+			showMessages(conversation, { scrollToEnd: true });
+			pending.delivery = await send(conversation.id, text, pending);
+			if (openID === conversation.id) showMessages(conversation, { scrollToEnd: false });
+		});
+	}
+
+	// Returns the pending bubble's delivery state once the Proxy answers.
+	async function send(conversationID, text, pending) {
+		try {
+			const response = await fetch(`/api/conversations/${conversationID}/messages`, {
+				method: "POST",
+				body: new URLSearchParams({ text }),
+			});
+			if (!response.ok) return "failed";
+			const result = await response.json();
+			if (result.status !== "confirmed") return "unconfirmed";
+			// The live stream may already have delivered this row; then drop the pending copy.
+			if (openMessages.some((m) => m.id === result.id)) {
+				openMessages = openMessages.filter((m) => m !== pending);
+				return undefined;
+			}
+			pending.id = result.id;
+			return undefined;
+		} catch {
+			return "unconfirmed"; // the request may have reached the Proxy before the network failed
+		}
 	}
 
 	// A new or changed Message arrived live: update its row, and the open Conversation.
@@ -651,8 +781,12 @@
 		}
 		if (!message.fromMe && openID !== id) row.toggleAttribute("data-unread", true);
 		if (openID !== id) return;
-		const index = openMessages.findIndex((m) => m.id === message.id);
-		if (index >= 0) openMessages[index] = message; // an edit, or a replay after reconnecting
+		let index = openMessages.findIndex((m) => m.id === message.id);
+		if (index < 0 && message.fromMe) {
+			// My own send, arriving live before the POST answered: it takes over the pending bubble.
+			index = openMessages.findIndex((m) => m.delivery === "sending" && m.text === message.text);
+		}
+		if (index >= 0) openMessages[index] = message; // an edit, a replay, or a send confirmed live
 		else openMessages.push(message);
 		showMessages(conversation, { scrollToEnd: message.fromMe });
 	}

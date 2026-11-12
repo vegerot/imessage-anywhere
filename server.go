@@ -11,22 +11,28 @@ import (
 	"net/http"
 	"net/netip"
 	"strconv"
+	"strings"
 	"time"
 )
 
 const conversationListLimit = 100
 
 type server struct {
-	engine *Engine
-	mux    *http.ServeMux
+	engine  *Engine
+	handler http.Handler
 }
 
 func NewServer(engine *Engine) http.Handler {
-	s := &server{engine: engine, mux: http.NewServeMux()}
-	s.mux.HandleFunc("GET /{$}", servePage)
-	s.mux.HandleFunc("GET /api/conversations", s.listConversations)
-	s.mux.HandleFunc("GET /api/conversations/{id}/messages", s.listMessages)
-	s.mux.HandleFunc("GET /api/events", s.streamEvents)
+	s := &server{engine: engine}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /{$}", servePage)
+	mux.HandleFunc("GET /api/conversations", s.listConversations)
+	mux.HandleFunc("GET /api/conversations/{id}/messages", s.listMessages)
+	mux.HandleFunc("POST /api/conversations/{id}/messages", s.sendMessage)
+	mux.HandleFunc("GET /api/events", s.streamEvents)
+	// Any website open on a tailnet device could otherwise submit a form here and send
+	// Messages as me. This refuses cross-origin POSTs using the browser's own headers.
+	s.handler = http.NewCrossOriginProtection().Handler(mux)
 	return s
 }
 
@@ -42,7 +48,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "only tailnet devices may connect", http.StatusForbidden)
 		return
 	}
-	s.mux.ServeHTTP(w, r)
+	s.handler.ServeHTTP(w, r)
 }
 
 func (s *server) listConversations(w http.ResponseWriter, r *http.Request) {
@@ -149,4 +155,24 @@ func (s *server) streamEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		flusher.Flush()
 	}
+}
+
+// sendMessage sends a form's text into a Conversation and reports whether it's confirmed.
+func (s *server) sendMessage(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "bad Conversation id", http.StatusBadRequest)
+		return
+	}
+	text := r.FormValue("text")
+	if strings.TrimSpace(text) == "" {
+		http.Error(w, "nothing to send", http.StatusBadRequest)
+		return
+	}
+	result, err := s.engine.Send(r.Context(), id, text)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, result)
 }

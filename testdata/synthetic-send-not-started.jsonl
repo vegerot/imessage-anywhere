@@ -1,0 +1,2 @@
+{"t": 0, "dir": "in", "line": "{\"jsonrpc\": \"2.0\", \"id\": \"send\", \"method\": \"send\", \"params\": {\"chat_id\": 242, \"text\": \"🧪 hi\", \"transport\": \"applescript\"}}"}
+{"t": 0.1, "dir": "out", "line": "{\"jsonrpc\": \"2.0\", \"id\": \"send\", \"error\": {\"code\": -32603, \"message\": \"Delivery failed before dispatch\", \"data\": {\"retry_safe\": true, \"disposition\": \"not_started\", \"transport\": \"applescript\", \"operation\": \"send\", \"detail\": \"Messages.app is not signed in.\"}}}"}

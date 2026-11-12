@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -502,5 +503,83 @@ func TestLiveMessagesAcceptAnExplicitCursorForManualReconnects(t *testing.T) {
 
 	if len(events) != 1 || events[0].ID != "183577" {
 		t.Errorf("events = %+v, want only 183577", events)
+	}
+}
+
+func (p *proxyUnderTest) postForm(t *testing.T, path string, form url.Values, header http.Header) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(form.Encode()))
+	req.RemoteAddr = tailnetAddr
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for k, v := range header {
+		req.Header[k] = v
+	}
+	return p.do(t, req)
+}
+
+type sendReply struct {
+	Status string `json:"status"`
+	ID     int64  `json:"id"`
+}
+
+func TestSendingTextTargetsTheConversationOverAppleScript(t *testing.T) {
+	p := startProxy(t, "imsg-0.21.0-p0.jsonl")
+
+	got := decode[sendReply](t, p.postForm(t, "/api/conversations/242/messages", url.Values{"text": {"🧪 hi"}}, nil))
+
+	if got != (sendReply{Status: "confirmed", ID: 183576}) {
+		t.Errorf("reply = %+v, want confirmed with the outgoing row's ID", got)
+	}
+	sends := p.imsgRequests(t, "send")
+	want := map[string]any{"chat_id": 242.0, "text": "🧪 hi", "transport": "applescript"}
+	if len(sends) != 1 || fmt.Sprint(sends[0]) != fmt.Sprint(want) {
+		t.Errorf("send requests = %v, want exactly %v", sends, want)
+	}
+}
+
+func TestAnUnconfirmedSendIsReportedAndNeverRetried(t *testing.T) {
+	p := startProxy(t, "synthetic-send-unconfirmed.jsonl")
+
+	got := decode[sendReply](t, p.postForm(t, "/api/conversations/242/messages", url.Values{"text": {"🧪 hi"}}, nil))
+
+	if got.Status != "unconfirmed" {
+		t.Errorf("reply = %+v, want status unconfirmed", got)
+	}
+	if sends := p.imsgRequests(t, "send"); len(sends) != 1 {
+		t.Errorf("imsg got %d send requests, want exactly 1 (an unconfirmed send may have gone out)", len(sends))
+	}
+}
+
+func TestASendThatNeverStartedFails(t *testing.T) {
+	p := startProxy(t, "synthetic-send-not-started.jsonl")
+
+	if got := p.postForm(t, "/api/conversations/242/messages", url.Values{"text": {"🧪 hi"}}, nil).Code; got != http.StatusBadGateway {
+		t.Errorf("status %d, want 502 (definitely not sent)", got)
+	}
+}
+
+func TestEmptyTextIsNotSent(t *testing.T) {
+	p := startProxy(t, "imsg-0.21.0-p0.jsonl")
+
+	if got := p.postForm(t, "/api/conversations/242/messages", url.Values{"text": {"  \n "}}, nil).Code; got != http.StatusBadRequest {
+		t.Errorf("status %d, want 400", got)
+	}
+	if sends := p.imsgRequests(t, "send"); len(sends) != 0 {
+		t.Errorf("imsg got send requests %v, want none", sends)
+	}
+}
+
+// Any website open on a tailnet device could otherwise submit a hidden form here and send
+// Messages as me.
+func TestCrossSiteSendsAreRefused(t *testing.T) {
+	p := startProxy(t, "imsg-0.21.0-p0.jsonl")
+
+	got := p.postForm(t, "/api/conversations/242/messages", url.Values{"text": {"🧪 hi"}}, http.Header{"Sec-Fetch-Site": {"cross-site"}})
+
+	if got.Code != http.StatusForbidden {
+		t.Errorf("status %d, want 403", got.Code)
+	}
+	if sends := p.imsgRequests(t, "send"); len(sends) != 0 {
+		t.Errorf("imsg got send requests %v, want none", sends)
 	}
 }

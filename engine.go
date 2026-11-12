@@ -469,3 +469,44 @@ func (e *Engine) Messages(ctx context.Context, conversationID int64, limit int) 
 	}
 	return messages, nil
 }
+
+// SendResult says whether a sent Message is confirmed in the Messages database.
+type SendResult struct {
+	Status string `json:"status"` // "confirmed" or "unconfirmed"
+	ID     int64  `json:"id,omitempty"`
+}
+
+// errNotSent means the Message certainly didn't go out, so sending again is safe.
+var errNotSent = errors.New("not sent")
+
+// imsg's "delivery outcome unknown" (may_have_completed, still_in_flight) and "mutation lane
+// blocked" errors: the Message may have gone out.
+const (
+	imsgOutcomeUnknown = -32001
+	imsgLaneBlocked    = -32004
+)
+
+// Send sends text into a Conversation through AppleScript (never imsg's SIP-off bridge).
+// imsg confirms a send only after its row appears in the database, which catches the
+// macOS 26+ "ghost row" bug. An unconfirmed send is reported, never retried: it may have
+// been delivered.
+func (e *Engine) Send(ctx context.Context, conversationID int64, text string) (SendResult, error) {
+	var result struct{ ID int64 }
+	params := map[string]any{"chat_id": conversationID, "text": text, "transport": "applescript"}
+	// Once written to imsg, a send can't be taken back; a closed browser mustn't abandon it.
+	err := e.call(context.WithoutCancel(ctx), "send", params, &result)
+	var rpcErr *rpcError
+	switch {
+	case err == nil && result.ID != 0:
+		return SendResult{Status: "confirmed", ID: result.ID}, nil
+	case err == nil: // ok without a row: imsg couldn't read the database to verify
+		return SendResult{Status: "unconfirmed"}, nil
+	case errors.Is(err, errEngineGone):
+		return SendResult{Status: "unconfirmed"}, nil
+	case errors.As(err, &rpcErr) && (rpcErr.Code == imsgOutcomeUnknown || rpcErr.Code == imsgLaneBlocked):
+		fmt.Fprintf(os.Stderr, "engine: send to %d unconfirmed: %v\n", conversationID, rpcErr)
+		return SendResult{Status: "unconfirmed"}, nil
+	default:
+		return SendResult{}, fmt.Errorf("%w: %v", errNotSent, err)
+	}
+}
