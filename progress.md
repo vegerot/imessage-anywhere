@@ -194,3 +194,7 @@ Next:
 
 - 🔬 With computer use on Messages.app (granted by Max), opened chat 2276 (SMS, 0 unread per imsg; chosen after re-checking 1947, which has 86 unread, so my earlier SQL count was wrong) and scrolled its only image into view. After 15 s: attachment 19484 still `transfer_state 0`, not on disk. Messages.app draws it as a file card ("optimized-2.PNG · PNG Image · 112 KB") with a ⬇︎ download button, as it did for the `answer-key.md` cards: on this Mac, attachments wait for a manual download. Hypothesis rejected: viewing alone doesn't bring attachments down.
 - Next: does clicking ⬇︎ put the file on disk? That's a download from an unknown sender, so asking Max first (questions-for-max item 9). The Alcove overlay blocked clicking the To field again; typing into the already-focused field worked.
+
+## 2026-11-12 — Correction: contact names are there from the start
+
+- ↩️ The clean-paths entry says imsg's first Conversation list after a restart can lack contact names. That was wrong. Measured with a fresh `imsg rpc` (SSH_CONNECTION set): 7 of 20 Conversations had names on the first call at 0.40 s, while `status` still said `contacts.available: false` (true at 0.93 s). The failed lookup at 01:43 was for "Coplan Chat", a group's own name that doesn't depend on Contacts; the list hadn't loaded at all because of the `loadConversations` deletion. Nothing to fix.
