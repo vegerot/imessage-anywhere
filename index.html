@@ -383,6 +383,66 @@
 		}
 	}
 
+	/* Switching Conversations (same-document View Transitions): a quick fade on desktop, and
+	   at phone width the iOS push from the list into a Conversation, popped in reverse. */
+	::view-transition-group(root) {
+		animation-duration: 0.15s;
+	}
+
+	@media (width < 45em) {
+		::view-transition-group(root) {
+			animation-duration: 0.35s;
+		}
+
+		::view-transition-old(root),
+		::view-transition-new(root) {
+			animation-duration: 0.35s;
+			animation-timing-function: cubic-bezier(0.25, 0.8, 0.25, 1);
+			animation-fill-mode: both;
+			mix-blend-mode: normal;
+		}
+
+		::view-transition-old(root) {
+			animation-name: push-out;
+		}
+
+		::view-transition-new(root) {
+			animation-name: push-in;
+		}
+
+		:root[data-direction="back"] {
+			&::view-transition-old(root) {
+				z-index: var(--banner-layer);
+				animation-name: pop-out;
+			}
+
+			&::view-transition-new(root) {
+				animation-name: pop-in;
+			}
+		}
+	}
+
+	@keyframes push-in {
+		from { translate: 100% 0; }
+	}
+
+	@keyframes push-out {
+		to { translate: -30% 0; filter: brightness(0.8); }
+	}
+
+	@keyframes pop-in {
+		from { translate: -30% 0; filter: brightness(0.8); }
+	}
+
+	@keyframes pop-out {
+		to { translate: 100% 0; }
+	}
+
+	main h2:focus-visible {
+		outline: 2px solid var(--accent);
+		outline-offset: 2px;
+	}
+
 	/* Phone width: iOS layout. The list and the Conversation are separate screens. */
 	@media (width < 45em) {
 		:root {
@@ -473,8 +533,8 @@
 
 	<template id="conversation-view">
 		<header>
-			<a class="back" href="#" aria-label="Back to Conversations">‹</a>
-			<h2></h2>
+			<a class="back" href="/" aria-label="Back to Conversations">‹</a>
+			<h2 tabindex="-1"></h2>
 		</header>
 		<ol id="messages" aria-live="polite"></ol>
 		<form class="composer">
@@ -539,7 +599,7 @@
 	function renderRow(conversation) {
 		const row = rowTemplate.content.firstElementChild.cloneNode(true);
 		const link = row.querySelector("a");
-		link.href = `#/conversations/${conversation.id}`;
+		link.href = `/conversations/${conversation.id}`;
 		fillAvatar(row.querySelector(".avatar"), conversation.name);
 		row.querySelector(".name").textContent = conversation.name;
 		const when = row.querySelector(".when");
@@ -701,8 +761,11 @@
 		lastEventID = Math.max(lastEventID, message.id);
 	}
 
-	async function openConversation(id) {
+	// Shows a Conversation's frame (header, composer, selected row) synchronously, so a
+	// View Transition can animate it without waiting for the network; or the empty state.
+	function showConversation(id) {
 		openID = id;
+		openMessages = [];
 		for (const [rowID, row] of rows) {
 			const link = row.querySelector("a");
 			if (rowID === id) link.setAttribute("aria-current", "page");
@@ -712,7 +775,7 @@
 		if (!conversation) {
 			main.removeAttribute("data-open");
 			main.replaceChildren(status);
-			status.textContent = "Select a Conversation";
+			status.textContent = id === null ? "Select a Conversation" : "This Conversation isn’t among the newest 100.";
 			return;
 		}
 		main.setAttribute("data-open", "");
@@ -720,6 +783,11 @@
 		main.querySelector("h2").textContent = conversation.name;
 		main.classList.toggle("imessage", conversation.service === "iMessage");
 		setUpComposer(conversation);
+	}
+
+	async function loadConversation(id) {
+		const conversation = conversations.get(id);
+		if (!conversation) return;
 		const loading = getJSON(`/api/conversations/${id}/messages`);
 		conversationLoading = loading.catch(() => {});
 		const messages = await loading;
@@ -874,13 +942,57 @@
 		}, quietLimit);
 	}
 
-	function route() {
-		const match = location.hash.match(/^#\/conversations\/(\d+)$/);
-		openConversation(match ? Number(match[1]) : null).catch((error) => {
+	const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)");
+
+	function conversationIDFromPath() {
+		const match = location.pathname.match(/^\/conversations\/(\d+)$/);
+		return match ? Number(match[1]) : null;
+	}
+
+	// Shows whatever the path names. On navigation it animates like Messages: at phone width,
+	// an iOS push (or pop) between the list and the Conversation; a quick fade on desktop.
+	function route({ animate }) {
+		const id = conversationIDFromPath();
+		const previousID = openID;
+		const update = () => showConversation(id);
+		if (!animate || !document.startViewTransition || reduceMotion.matches) {
+			update();
+			afterRoute(id, previousID);
+			return;
+		}
+		document.documentElement.dataset.direction = id === null ? "back" : "forward";
+		const transition = document.startViewTransition(update);
+		transition.finished.finally(() => afterRoute(id, previousID));
+	}
+
+	// Focus follows the navigation (a View Transition doesn't move it), then Messages load.
+	function afterRoute(id, previousID) {
+		if (id !== null) {
+			main.querySelector("h2")?.focus({ preventScroll: true });
+		} else {
+			rows.get(previousID)?.querySelector("a").focus({ preventScroll: true });
+		}
+		loadConversation(id).catch((error) => {
 			main.replaceChildren(status);
-			status.textContent = `Couldn't load the Conversation: ${error.message}`;
+			status.textContent = `Couldn’t load this Conversation: ${error.message}. Reload to try again.`;
 		});
 	}
+
+	// Plain clicks on Conversation links and the back link navigate in place; modified clicks
+	// (new tab, new window) keep the browser's default.
+	document.addEventListener("click", (event) => {
+		const link = event.target.closest("a");
+		const plain = event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey;
+		if (!link || !plain || event.defaultPrevented || link.origin !== location.origin || link.target) return;
+		if (link.pathname !== "/" && !/^\/conversations\/\d+$/.test(link.pathname)) return;
+		event.preventDefault();
+		if (link.pathname === location.pathname) return;
+		history.pushState(null, "", link.pathname);
+		route({ animate: true });
+	});
+
+	// Back, Forward, and the phone's back gesture. Never push history from here.
+	addEventListener("popstate", () => route({ animate: true }));
 
 	async function loadConversations() {
 		const fresh = await getJSON("/api/conversations");
@@ -904,8 +1016,7 @@
 		await loadConversations();
 		listReady = true;
 		for (const [message, isNew] of early.splice(0)) applyLiveMessage(message, isNew);
-		addEventListener("hashchange", route);
-		route();
+		route({ animate: false });
 		fillPreviews();
 	} catch (error) {
 		status.textContent = `Couldn't load Conversations: ${error.message}`;

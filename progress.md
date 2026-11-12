@@ -176,3 +176,10 @@ Next:
 - 🧪 23 seam tests pass. The sanitizer also keeps `reaction_emoji`/`reaction_type`. Three more synthetic transcripts (watch error, lane blocked, still in flight), shaped from imsg's source, since those failures can't be produced on purpose.
 - ✅ Redeployed through the launchd agent (the re-signed build kept its grant again); page shows the Conversation in 1.0 s; a live Message arrived with its echo and no duplicates; no console errors.
 - 🧭 Max asked about `/#/` vs clean paths and leans toward clean paths; compared in chat. Next: clean paths with `pushState`/`popstate` (modern-web-guidance `stack-drill-down`) and a same-document View Transition with focus routing (`same-document-transitions`).
+
+## 2026-11-12 — 🧭 Clean paths and View Transitions
+
+- 🧭 Conversations moved from `/#/conversations/<id>` to `/conversations/<id>`: the Proxy serves the page there (404 for non-numeric IDs; seam test), plain link clicks become `pushState`, and `popstate` (Back, the phone's gesture) re-routes without pushing. Per modern-web-guidance `stack-drill-down` and `same-document-transitions`: the update inside `document.startViewTransition` is synchronous (header and composer; Messages load after, so a slow fetch never freezes the animation); iOS push/pop at phone width, a 0.15 s fade on desktop, nothing with reduced motion; focus moves to the heading on open and back to the row on return. The hash routes are gone.
+- ✅ Checked with chrome-devtools in an isolated context emulating 390×844 (via `/chrome-control`'s tooling): opening Coplan Chat set the path, ran a "forward" transition, focused the heading, hid the list, loaded 100 bubbles; Back returned to `/` with a "back" transition and focus on the Coplan Chat row.
+- 🐛 Caught before committing: my router edit had also deleted `loadConversations` ("loadConversations is not defined"); restored. An undefined call like this is what moving the page to TypeScript (next) will catch.
+- 🔬 Found: right after the Proxy restarts, imsg's first Conversation list can lack contact names (its Contacts catalog loads in the background, per imsg's docs), so names appear as raw numbers until a reload. Not fixed yet.

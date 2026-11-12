@@ -28,6 +28,7 @@ func NewServer(engine *Engine) http.Handler {
 	s := &server{engine: engine}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", servePage)
+	mux.HandleFunc("GET /conversations/{id}", serveConversationPage)
 	mux.HandleFunc("GET /api/conversations", s.listConversations)
 	mux.HandleFunc("GET /api/conversations/{id}/messages", s.listMessages)
 	mux.HandleFunc("POST /api/conversations/{id}/messages", s.sendMessage)
@@ -87,6 +88,16 @@ var page []byte
 func servePage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write(page)
+}
+
+// serveConversationPage serves the same page at a Conversation's clean path, so a reload
+// or a bookmark opens it directly; the page reads the path.
+func serveConversationPage(w http.ResponseWriter, r *http.Request) {
+	if _, err := strconv.ParseInt(r.PathValue("id"), 10, 64); err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	servePage(w, r)
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

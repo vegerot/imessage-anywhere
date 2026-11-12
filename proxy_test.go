@@ -701,3 +701,19 @@ func TestAStillInFlightSendIsUnconfirmedAndRestartsImsg(t *testing.T) {
 		t.Error("imsg wasn't restarted; its send queue stays blocked")
 	}
 }
+
+// Conversations have clean paths: the Proxy serves the same page at /conversations/{id},
+// so a reload or a bookmark opens that Conversation directly.
+func TestConversationPathsServeThePage(t *testing.T) {
+	p := startProxy(t, "imsg-0.21.0-01.jsonl")
+
+	for _, path := range []string{"/", "/conversations/21"} {
+		got := p.get(t, path, tailnetAddr)
+		if got.Code != http.StatusOK || !strings.HasPrefix(got.Header().Get("Content-Type"), "text/html") || !strings.Contains(got.Body.String(), "<title>Messages</title>") {
+			t.Errorf("GET %s: status %d, Content-Type %q; want the page", path, got.Code, got.Header().Get("Content-Type"))
+		}
+	}
+	if got := p.get(t, "/conversations/not-a-number", tailnetAddr).Code; got != http.StatusNotFound {
+		t.Errorf("GET /conversations/not-a-number: status %d, want 404", got)
+	}
+}
