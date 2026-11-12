@@ -1,5 +1,7 @@
 # 🙋 Questions for Max
 
+**Answered 2026-11-12 ~01:35** (see `progress.md`): 2 show everything; 3 follow the system light/dark setting, no old-browser fallbacks; 5 my call (after v1.0); 6 first look on Android: looks good; 7 Messages.app access granted; 8 Full Disk Access granted. Still open: 1 (iOS comparison done while unlocked), 4 (FYI).
+
 Things that came up while Max was away (from 2026-11-12, 01:00). Answer inline or in chat; resolved items move to `progress.md`.
 
 1. **iPhone Mirroring needs your iPhone unlocked.** I couldn't compare the phone layout with iOS Messages (the mirroring window says "Unlock Your iPhone"). The phone layout uses Apple's known iOS colors for now. When you're back: unlock, and I'll measure the iOS list and Conversation screens.

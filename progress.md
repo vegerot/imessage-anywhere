@@ -149,3 +149,13 @@ Next:
 
 Next:
 - After Max's grant: finish 07. 05 needs Max too (item 7). Meanwhile: code review of everything so far.
+
+## 2026-11-12 — ✅ 07 Always running
+
+- 🔓 Max granted Full Disk Access to `~/.local/bin/imessage-anywhere`. After stopping the hand-run Proxy, the launchd agent passed its readiness check and served (loopback 200; `launchctl print`: running).
+- ✅ The grant survives a rebuild, verified: `install-launch-agent.sh` rebuilt and re-signed the binary (its code hash changed) and the agent still read the database. Signing with the Apple Development identity (designated requirement = identifier + certificate) is what makes that work.
+- ✅ The agent sent "🧪 imessage-anywhere test (07 sent by the launchd agent)": confirmed, row 183586, so it also has Automation access.
+- 🙋 Max's answers: Q2 keep showing every Conversation; Q3 follow the system light/dark setting with no old-browser fallbacks (already the behavior); Q5 my call: unnamed groups as "Matt & +1 (240)…" after v1.0; Q6 a first look on Android looks good; granted computer use on Messages.app for ticket 05's experiment. Asked why URLs contain `/#/`; offered clean paths via the Navigation API.
+
+Next:
+- Fix the 10 code-review findings (test-first where they cross the seam), then ticket 05's experiment.
