@@ -69,3 +69,18 @@ Next:
 
 Next:
 - Start 01 (the only ready slice besides 07).
+
+## 2026-11-12 — Five-step review of the plan
+
+- 🔁 Re-evaluated the whole plan against the global CLAUDE.md values (simplicity, no paranoia, experiment-driven) and the five-step engineering algorithm; Max approved every change. `plan.md` was rewritten (the plan holds no status).
+- 🔬 Three experiments, recorded with commands in [`experiments/`](experiments/README.md):
+  - E1: 69 of 102 images received in 180 days are HEIC, but only 2 of the 102 are on the Host Mac's disk, even yesterday's. Ticket 05 now starts with an experiment on what brings attachments down.
+  - E2: one `imsg rpc` child serves several `watch.subscribe` subscriptions with independent cursors. Each SSE connection gets its own subscription; the fan-out, resume buffer, and `messages.after` fallback are deleted.
+  - E3: the Contacts permission request never prompted from a Rex terminal (`notDetermined`); with `SSH_CONNECTION` set, imsg reads the AddressBook database under Full Disk Access and names 7 of 20 recent Conversations. Ticket 06 folded into 01 and 02.
+- 🗑️ Deleted: the imsg version check (replaced by `brew pin imsg`, done now: 0.21.0 pinned), in-process child restart (the Proxy exits, launchd restarts it, browsers resume), the GUID for sends (`chat_id` works, per P0), history paging (last 100 until ticket 08 shows a need), the `style-notes/` folder (values live in CSS custom properties), per-ticket transcript re-recording, and the duplicated `v1.0 scope` and `Prototype ladder` sections.
+- 🧠 Corrected: 01's "Full Disk Access survives `go build`" check tested nothing (from a Rex terminal, macOS checks Rex Server's grant); it moved to 07, which also gains the tunnel-not-up-yet case.
+- ⚡ Accelerated: the Proxy also listens on loopback, so the agent checks each ticket on the Host Mac side by side with Messages.app; real devices only after 02 and during 08.
+- Unverified: whether anything reliably brings attachments to disk (ticket 05); Full Disk Access under launchd (ticket 07).
+
+Next:
+- Ticket 01.
