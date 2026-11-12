@@ -84,3 +84,14 @@ Next:
 
 Next:
 - Ticket 01.
+
+## 2026-11-12 — ✅ 01 Conversation list in a browser
+
+- 🦫 Walking skeleton: Go Proxy (`main.go`), Engine client over one `imsg rpc` child (`engine.go`), HTTP layer with the source filter (`server.go`), and the embedded page (`index.html`). The imsg child runs with `SSH_CONNECTION` set for contact names (E3). Messages endpoint added early: the list fills its previews with `?limit=1` (50 pipelined one-message reads take 2.8 s, too slow to block the list on).
+- 🧪 Seam tests (5, all pass with `go test ./...`): Conversations newest first with display names (contact, group, unnamed group, RCS, +1 numbers formatted as `+1 (555) 010-0003`); only tailnet and loopback callers served (office, home LAN, just-outside-CGNAT, and the WireGuard peer refused); Engine signals Done when imsg exits; the fake flags uncovered requests; Messages oldest first with limit 100 by default. New transcript `testdata/imsg-0.21.0-01.jsonl` (100 Conversations, recorded with contact names); the recorder and sanitizer are now reusable scripts, and the sanitizer refuses to write output when a real value leaks.
+- ✅ Acceptance, checked on the Host Mac against real imsg: the Proxy listened on `172.16.1.2:7171` and `127.0.0.1:7171`; Chrome over loopback showed 100 Conversations with previews; spot-check against Messages.app matched Max Coplan (12:27 AM, same preview), Max Berger, Mommy, the group Coplan Chat, and SMS 61746 (identical preview). Phone width (390 px iframe) shows the iOS large-title list; light and dark both work. `imsg` pinned (done in the review).
+- 🎨 Style: dark colors measured from a Messages.app window capture (`screencapture -l`, kept out of the repo) and converted to `oklch()`; light colors are Apple system colors.
+- 🙋 Opened `questions-for-max.md`: iPhone Mirroring needs an unlock for the iOS comparison; Messages.app filters some Conversations we show; the browser policy (no `light-dark()` fallback).
+
+Next:
+- Ticket 02 (Read a Conversation).

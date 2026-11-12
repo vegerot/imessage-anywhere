@@ -19,7 +19,9 @@ KEEP = {
 HANDLE_KEYS = {
     "identifier", "participants", "last_addressed_handle", "sender", "destination_caller_id",
     "chat_identifier", "name", "display_name", "chat_name", "account_login", "to",
+    "contact_name", "sender_name",
 }
+replaced = set()  # every real string we rewrote, for the leak check at the end
 fakes = {}
 
 
@@ -76,6 +78,8 @@ def clean(value, key=None):
         return [clean(v, key) for v in value]
     if not isinstance(value, str) or key in KEEP:
         return value
+    if len(value) >= 5 and not value.startswith("🧪"):
+        replaced.add(value)
     if key in HANDLE_KEYS:
         return handle(value)
     if key in {"guid", "chat_guid", "message_id", "account_id"}:
@@ -89,8 +93,17 @@ def clean(value, key=None):
     return fake("other", value, lambda n: f"synthetic-{n}")
 
 
+out = []
 for raw in open(sys.argv[1]):
     record = json.loads(raw)
     if record["dir"] in ("in", "out"):
         record["line"] = json.dumps(clean(json.loads(record["line"])), ensure_ascii=False)
-    print(json.dumps(record, ensure_ascii=False))
+    out.append(json.dumps(record, ensure_ascii=False))
+result = "\n".join(out) + "\n"
+
+# Leak check: no rewritten real value may survive anywhere in the output (e.g. inside a
+# field we forgot to list). Path fragments like "chat.db" are expected and harmless.
+leaks = sorted(s for s in replaced if s in result and s != "chat.db")
+if leaks:
+    sys.exit(f"sanitize: {len(leaks)} real value(s) leaked into the output; refusing to write it")
+sys.stdout.write(result)

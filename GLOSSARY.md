@@ -27,3 +27,11 @@ _Avoid_: iMessage (that is one Service), text
 **Service**:
 The network a Message travelled over: iMessage, SMS, or RCS. SMS and RCS reach the Host Mac through the iPhone's Text Message Forwarding.
 _Avoid_: protocol, channel, bubble color
+
+**Handle**:
+The address that identifies one participant in a Conversation: a phone number, an email address, or an SMS short code.
+_Avoid_: address, number, ID
+
+**Contact**:
+A person in the Host Mac's Contacts; when a Handle belongs to a Contact, the page shows the Contact's name instead of the Handle.
+_Avoid_: buddy, person, friend
