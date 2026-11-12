@@ -68,7 +68,11 @@ def path(value):
         return "/Users/me/Library/Messages/chat.db"
     last = value.rsplit("/", 1)[-1]
     ext = "." + last.rsplit(".", 1)[-1] if "." in last else ""  # on-disk paths are often extensionless
-    return fake("path", value, lambda n: f"~/Library/Messages/Attachments/00/00/{n:04d}/attachment-{n}{ext}")
+    # Keep the path's form: imsg's original_path is absolute, the database's filename is "~/…".
+    # Both forms of one file get the same fake, under a synthetic home /Users/me.
+    relative = re.sub(r"^(~|/Users/[^/]+)/", "", value)
+    home = "~" if value.startswith("~") else "/Users/me"
+    return home + "/" + fake("path", relative, lambda n: f"Library/Messages/Attachments/00/00/{n:04d}/attachment-{n}{ext}")
 
 
 OBJECT_REPLACEMENT = "\ufffc"  # where Messages puts an attachment inside a Message's text

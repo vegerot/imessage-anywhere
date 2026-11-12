@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -340,17 +341,26 @@ type Message struct {
 	Reactions      []Reaction `json:"reactions,omitempty"`
 	// Placeholder names what the page can't show yet (attachments, polls, app messages,
 	// unsent Messages), so nothing vanishes silently.
-	Placeholder string `json:"placeholder,omitempty"`
+	Placeholder string       `json:"placeholder,omitempty"`
+	Attachments []Attachment `json:"attachments,omitempty"`
 	// A tapback arriving live is its own row pointing at the Message it reacts to.
 	ReactsTo       string `json:"reactsTo,omitempty"`
 	Tapback        string `json:"tapback,omitempty"`
 	TapbackRemoved bool   `json:"tapbackRemoved,omitempty"`
 }
 
+// Attachment is a file sent with a Message. Missing means it isn't on the Host Mac's disk:
+// Messages.app downloads attachments only when asked (experiment, 2026-11-12).
+type Attachment struct {
+	Name    string `json:"name"`
+	Kind    string `json:"kind"` // image, video, audio, sticker, or file
+	Missing bool   `json:"missing,omitempty"`
+}
+
 // visible says whether a Message has anything to show; whitespace-only rows (seen in the
 // wild) are left out of history and the live stream alike.
 func (m Message) visible() bool {
-	return m.Text != "" || m.Placeholder != "" || len(m.Reactions) > 0 || m.ReactsTo != ""
+	return m.Text != "" || m.Placeholder != "" || len(m.Reactions) > 0 || m.ReactsTo != "" || len(m.Attachments) > 0
 }
 
 // Reaction is a tapback on a Message.
@@ -390,6 +400,7 @@ type imsgMessage struct {
 }
 
 type imsgAttachment struct {
+	OriginalPath string `json:"original_path"`
 	TransferName string `json:"transfer_name"`
 	UTI          string `json:"uti"`
 	IsSticker    bool   `json:"is_sticker"`
@@ -413,6 +424,11 @@ func (m imsgMessage) toMessage() Message {
 	}
 	if !m.IsFromMe {
 		msg.SenderName = nameOr(m.SenderName, m.Sender)
+	}
+	if !m.isLinkPreview() {
+		for _, a := range m.Attachments {
+			msg.Attachments = append(msg.Attachments, Attachment{Name: a.TransferName, Kind: a.kind(), Missing: a.Missing})
+		}
 	}
 	if m.IsReaction {
 		msg.Text, msg.Placeholder = "", "" // its text is a summary like "Loved an image"
@@ -442,9 +458,9 @@ func (m imsgMessage) placeholder() string {
 		return "📊 Poll: " + m.Poll.Question
 	case m.Poll != nil:
 		return "📊 Poll"
-	case m.BalloonBundleID != "" && !strings.Contains(m.BalloonBundleID, "URLBalloonProvider"):
+	case m.BalloonBundleID != "" && !m.isLinkPreview():
 		return "🧩 " + appName(m.BalloonBundleID)
-	case len(m.Attachments) > 0 && !strings.Contains(m.BalloonBundleID, "URLBalloonProvider"):
+	case len(m.Attachments) > 0 && !m.isLinkPreview():
 		label := attachmentLabel(m.Attachments[0])
 		if extra := len(m.Attachments) - 1; extra > 0 {
 			label += fmt.Sprintf(" (+%d)", extra)
@@ -453,6 +469,11 @@ func (m imsgMessage) placeholder() string {
 	default:
 		return ""
 	}
+}
+
+// isLinkPreview: a link's preview card; its attachment is preview data, not a file to show.
+func (m imsgMessage) isLinkPreview() bool {
+	return strings.Contains(m.BalloonBundleID, "URLBalloonProvider")
 }
 
 // appName names the iMessage apps seen in my Messages; others are just "App message".
@@ -470,15 +491,30 @@ func appName(bundleID string) string {
 	return "App message"
 }
 
-func attachmentLabel(a imsgAttachment) string {
+func (a imsgAttachment) kind() string {
 	switch {
 	case a.IsSticker:
-		return "Sticker"
+		return "sticker"
 	case strings.Contains(a.UTI, "image") || a.UTI == "public.heic" || a.UTI == "public.jpeg" || a.UTI == "public.png":
-		return "📷 Photo"
+		return "image"
 	case strings.Contains(a.UTI, "movie") || strings.Contains(a.UTI, "video") || a.UTI == "public.mpeg-4":
-		return "🎬 Video"
+		return "video"
 	case strings.Contains(a.UTI, "audio") || a.UTI == "com.apple.coreaudio-format":
+		return "audio"
+	default:
+		return "file"
+	}
+}
+
+func attachmentLabel(a imsgAttachment) string {
+	switch a.kind() {
+	case "sticker":
+		return "Sticker"
+	case "image":
+		return "📷 Photo"
+	case "video":
+		return "🎬 Video"
+	case "audio":
 		return "🎤 Audio"
 	default:
 		return "📎 " + a.TransferName
@@ -573,4 +609,45 @@ func (e *Engine) Ready(ctx context.Context) error {
 	return fmt.Errorf("imsg %s can't read the Messages database (%s). Grant Full Disk Access to %s "+
 		"(or to the terminal app running it) in System Settings → Privacy & Security → Full Disk Access, then restart it",
 		status.Version, status.Database.Error, program)
+}
+
+// AttachmentFile is an attachment's file on the Host Mac's disk.
+type AttachmentFile struct {
+	Path string
+	UTI  string
+	Name string
+}
+
+// errNoAttachment: imsg reports no such attachment for that Message, or it isn't on disk.
+var errNoAttachment = errors.New("no such attachment on the Host Mac")
+
+// AttachmentFile finds the file of a Message's index-th attachment, as imsg reports it. The
+// browser names only (Conversation, Message, index), never a path.
+func (e *Engine) AttachmentFile(ctx context.Context, conversationID, messageID int64, index int) (AttachmentFile, error) {
+	var result struct{ Messages []imsgMessage }
+	params := map[string]any{"since_rowid": messageID - 1, "chat_id": conversationID, "limit": 1, "attachments": true}
+	if err := e.call(ctx, "messages.after", params, &result); err != nil {
+		return AttachmentFile{}, err
+	}
+	if len(result.Messages) == 0 || result.Messages[0].ID != messageID || index < 0 || index >= len(result.Messages[0].Attachments) {
+		return AttachmentFile{}, errNoAttachment
+	}
+	a := result.Messages[0].Attachments[index]
+	if a.Missing {
+		return AttachmentFile{}, errNoAttachment
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return AttachmentFile{}, err
+	}
+	path := a.OriginalPath // absolute, per imsg's docs; expand "~/" too, to be safe
+	if rest, ok := strings.CutPrefix(path, "~/"); ok {
+		path = filepath.Join(home, rest)
+	}
+	// imsg only reports paths in Messages' attachment store; anything else would be a bug.
+	root := filepath.Join(home, "Library", "Messages", "Attachments")
+	if rel, err := filepath.Rel(root, path); err != nil || strings.HasPrefix(rel, "..") {
+		return AttachmentFile{}, fmt.Errorf("imsg reported an attachment outside %s: %s", root, path)
+	}
+	return AttachmentFile{Path: path, UTI: a.UTI, Name: a.TransferName}, nil
 }

@@ -12,6 +12,12 @@ interface Conversation {
 	lastMessageAt: string;
 }
 
+interface Attachment {
+	name: string;
+	kind: "image" | "video" | "audio" | "sticker" | "file";
+	missing?: boolean; // not on the Host Mac's disk: Messages.app downloads attachments only when asked
+}
+
 interface Reaction {
 	emoji: string;
 	from: string;
@@ -31,6 +37,7 @@ interface Message {
 	createdAt: string;
 	edited?: boolean;
 	reactions?: Reaction[];
+	attachments?: Attachment[];
 	placeholder?: string; // what the page can't show yet (attachments, polls, …)
 	reactsTo?: string; // a live tapback: the GUID of the Message it reacts to
 	tapback?: string;
@@ -200,7 +207,15 @@ async function fillOnce(): Promise<void> {
 // ── The open Conversation ─────────────────────────────────────────────────────────────
 
 let openID: number | null = null;
-let openMessages: Message[] = [];
+let openMessages: Message[] = []; // the open Conversation's real Messages
+// Bubbles I'm sending (or that came back unconfirmed or failed), per Conversation. Kept apart
+// from openMessages, so loading history or switching Conversations never drops one.
+const pendingSends = new Map<number, Message[]>();
+const pendingFor = (id: number) => pendingSends.get(id) ?? [];
+
+function removePending(conversationID: number, pending: Message): void {
+	pendingSends.set(conversationID, pendingFor(conversationID).filter((m) => m !== pending));
+}
 let lastEventID = 0; // the newest Message row ID seen anywhere: the live stream resumes after it
 
 function noteSeen(message: Message): void {
@@ -269,28 +284,91 @@ const deliveryLabels: Record<Delivery, string> = {
 	failed: "Not sent.",
 };
 
-function renderMessage(conversation: Conversation, message: Message): HTMLLIElement {
-	const bubble = document.createElement("p");
-	bubble.className = "bubble";
-	if (message.text) bubble.append(linkified(message.text));
-	if (message.placeholder) {
-		const placeholder = document.createElement("span");
-		placeholder.className = "placeholder";
-		placeholder.textContent = message.placeholder;
-		bubble.append(placeholder);
+const kindLabels: Record<Attachment["kind"], string> = {
+	image: "📷 Photo",
+	video: "🎬 Video",
+	audio: "🎤 Audio",
+	sticker: "Sticker",
+	file: "📎 File",
+};
+
+// An attachment on the Host Mac's disk is shown (images inline, media with native controls,
+// files as downloads); one that isn't says so, instead of vanishing.
+function renderAttachment(message: Message, attachment: Attachment, index: number): HTMLElement {
+	const url = `/api/conversations/${message.conversationId}/messages/${message.id}/attachments/${index}`;
+	if (attachment.missing) {
+		const label = document.createElement("span");
+		label.className = "placeholder";
+		label.textContent = `${kindLabels[attachment.kind]}, not downloaded on the Mac`;
+		return label;
 	}
-	if (message.reactions?.length) {
+	switch (attachment.kind) {
+		case "image":
+		case "sticker": {
+			const img = document.createElement("img");
+			img.src = url;
+			img.alt = attachment.name;
+			img.loading = "lazy";
+			img.addEventListener("load", keepAtEnd);
+			return img;
+		}
+		case "video":
+		case "audio": {
+			const media = document.createElement(attachment.kind);
+			media.src = url;
+			media.controls = true;
+			media.preload = "metadata";
+			return media;
+		}
+		case "file": {
+			const link = document.createElement("a");
+			link.href = url;
+			link.download = attachment.name;
+			link.textContent = `📎 ${attachment.name}`;
+			return link;
+		}
+	}
+}
+
+function renderMessage(conversation: Conversation, message: Message): HTMLLIElement {
+	const li = item("message");
+	li.classList.toggle("from-me", message.fromMe);
+	li.classList.toggle("imessage", conversation.service === "iMessage");
+	li.dataset["id"] = String(message.id);
+
+	const attachments = message.attachments ?? [];
+	const figures = attachments.map((attachment, index) => {
+		const figure = document.createElement("figure");
+		figure.className = "attachment";
+		figure.append(renderAttachment(message, attachment, index));
+		return figure;
+	});
+	li.append(...figures);
+
+	// The placeholder names attachments when there are any; they're shown above instead.
+	const placeholderText = attachments.length > 0 ? undefined : message.placeholder;
+	let bubble: HTMLParagraphElement | undefined;
+	if (message.text || placeholderText) {
+		bubble = document.createElement("p");
+		bubble.className = "bubble";
+		if (message.text) bubble.append(linkified(message.text));
+		if (placeholderText) {
+			const placeholder = document.createElement("span");
+			placeholder.className = "placeholder";
+			placeholder.textContent = placeholderText;
+			bubble.append(placeholder);
+		}
+		li.append(bubble);
+	}
+	// Tapbacks sit on the bubble, or on the photo when there's no text, as on iOS.
+	const tapbackHost = bubble ?? figures.at(-1);
+	if (message.reactions?.length && tapbackHost) {
 		const tapbacks = document.createElement("span");
 		tapbacks.className = "tapbacks";
 		tapbacks.textContent = message.reactions.map((r) => r.emoji).join("");
 		tapbacks.title = message.reactions.map((r) => `${r.from}: ${r.emoji}`).join("\n");
-		bubble.append(tapbacks);
+		tapbackHost.append(tapbacks);
 	}
-
-	const li = item("message", bubble);
-	li.classList.toggle("from-me", message.fromMe);
-	li.classList.toggle("imessage", conversation.service === "iMessage");
-	li.dataset["id"] = String(message.id);
 	if (message.delivery) {
 		const label = small("delivery", deliveryLabels[message.delivery]);
 		label.classList.toggle("warning", message.delivery !== "sending");
@@ -300,11 +378,25 @@ function renderMessage(conversation: Conversation, message: Message): HTMLLIElem
 	return li;
 }
 
+// Whether the Message list is scrolled to its end; images that load later keep it there,
+// unless I've scrolled up to read.
+let atEnd = true;
+
+function keepAtEnd(): void {
+	const messages = main.querySelector("#messages");
+	if (atEnd && messages) messages.scrollTop = messages.scrollHeight;
+}
+
+const nearEnd = (list: HTMLElement) => list.scrollHeight - list.scrollTop - list.clientHeight < 80;
+
 function showMessages(conversation: Conversation, { scrollToEnd }: { scrollToEnd: boolean }): void {
 	const messages = find(main, "#messages", HTMLOListElement);
-	const nearEnd = messages.scrollHeight - messages.scrollTop - messages.clientHeight < 80;
-	messages.replaceChildren(...renderMessages(conversation, openMessages));
-	if (scrollToEnd || nearEnd) messages.scrollTop = messages.scrollHeight;
+	const wasAtEnd = nearEnd(messages);
+	messages.replaceChildren(...renderMessages(conversation, [...openMessages, ...pendingFor(conversation.id)]));
+	if (scrollToEnd || wasAtEnd) {
+		messages.scrollTop = messages.scrollHeight;
+		atEnd = true;
+	}
 }
 
 // Shows a Conversation's frame (header, composer, selected row) synchronously, so a View
@@ -327,6 +419,8 @@ function showConversation(id: number | null): void {
 	main.setAttribute("data-open", "");
 	main.replaceChildren(viewTemplate.content.cloneNode(true));
 	find(main, "h2", HTMLHeadingElement).textContent = conversation.name;
+	const messages = find(main, "#messages", HTMLOListElement);
+	messages.addEventListener("scroll", () => (atEnd = nearEnd(messages)), { passive: true });
 	main.classList.toggle("imessage", conversation.service === "iMessage");
 	setUpComposer(conversation);
 }
@@ -372,11 +466,10 @@ function setUpComposer(conversation: Conversation): void {
 			createdAt: new Date().toISOString(),
 			delivery: "sending",
 		};
-		openMessages.push(pending);
+		pendingSends.set(conversation.id, [...pendingFor(conversation.id), pending]);
 		showMessages(conversation, { scrollToEnd: true });
 		const delivery = await send(conversation.id, text, pending);
 		if (delivery) pending.delivery = delivery;
-		else delete pending.delivery; // confirmed: no label
 		if (openID === conversation.id) showMessages(conversation, { scrollToEnd: false });
 	});
 }
@@ -391,12 +484,11 @@ async function send(conversationID: number, text: string, pending: Message): Pro
 		if (!response.ok) return "failed";
 		const result = fromJSON<SendResult>(await response.text());
 		if (result.status !== "confirmed" || result.id === undefined) return "unconfirmed";
-		const confirmedID = result.id;
-		// The live stream may already have delivered this row; then drop the pending copy.
-		if (openMessages.some((m) => m.id === confirmedID)) {
-			openMessages = openMessages.filter((m) => m !== pending);
-		} else {
-			pending.id = confirmedID;
+		// Confirmed: it's a real Message now. The live stream may already have delivered it.
+		removePending(conversationID, pending);
+		if (openID === conversationID && !openMessages.some((m) => m.id === result.id)) {
+			const { delivery: _sending, ...sent } = pending;
+			openMessages.push({ ...sent, id: result.id });
 		}
 		return undefined;
 	} catch {
@@ -436,13 +528,14 @@ async function applyLiveMessage(message: Message, isNew: boolean): Promise<void>
 		applyTapback(conversation, message);
 		return;
 	}
-	let index = openMessages.findIndex((m) => m.id === message.id);
-	if (index < 0 && message.fromMe) {
+	if (message.fromMe) {
 		// My own send arriving live, before the POST answered or after it came back
-		// unconfirmed (it was delivered after all): it takes over the pending bubble.
-		index = openMessages.findIndex((m) => (m.delivery === "sending" || m.delivery === "unconfirmed") && m.text.trim() === message.text);
+		// unconfirmed (it was delivered after all): it replaces the pending bubble.
+		const pending = pendingFor(id).find((m) => (m.delivery === "sending" || m.delivery === "unconfirmed") && m.text.trim() === message.text);
+		if (pending) removePending(id, pending);
 	}
-	if (index >= 0) openMessages[index] = message; // an edit, a replay, or a send confirmed live
+	const index = openMessages.findIndex((m) => m.id === message.id);
+	if (index >= 0) openMessages[index] = message; // an edit, or a replay after reconnecting
 	else openMessages.push(message);
 	showMessages(conversation, { scrollToEnd: message.fromMe });
 }
@@ -515,42 +608,63 @@ function route({ animate }: { animate: boolean }): void {
 	const previousID = openID;
 	if (!animate || reduceMotion.matches) {
 		showConversation(id);
-		afterRoute(id, previousID);
+		loadOpenConversation(id);
+		moveFocus(id, previousID);
 		return;
 	}
 	document.documentElement.dataset["direction"] = id === null ? "back" : "forward";
 	const transition = document.startViewTransition(() => showConversation(id));
-	transition.finished.finally(() => afterRoute(id, previousID));
+	// Messages load as soon as the frame is in place; only focus waits for the animation.
+	transition.updateCallbackDone.then(() => loadOpenConversation(id));
+	transition.finished.finally(() => moveFocus(id, previousID));
 }
 
-// Focus follows the navigation (a View Transition doesn't move it), then Messages load.
-function afterRoute(id: number | null, previousID: number | null): void {
-	if (id !== null) {
-		main.querySelector("h2")?.focus({ preventScroll: true });
-	} else if (previousID !== null) {
-		rows.get(previousID)?.querySelector("a")?.focus({ preventScroll: true });
-	}
+// A navigation replaced by a newer one (e.g. Back during the animation) does nothing.
+const isCurrent = (id: number | null) => id === openID;
+
+function loadOpenConversation(id: number | null): void {
+	if (!isCurrent(id)) return;
 	loadConversation(id).catch((error: unknown) => {
 		main.replaceChildren(status);
 		status.textContent = `Couldn’t load this Conversation: ${error instanceof Error ? error.message : error}. Reload to try again.`;
 	});
 }
 
+// Focus follows the navigation (a View Transition doesn't move it). Returning to the list
+// focuses the row I came from, scrolling it into view, so I keep my place.
+function moveFocus(id: number | null, previousID: number | null): void {
+	if (!isCurrent(id)) return;
+	if (id !== null) {
+		main.querySelector("h2")?.focus({ preventScroll: true });
+	} else if (previousID !== null) {
+		rows.get(previousID)?.querySelector("a")?.focus();
+	}
+}
+
 // Plain clicks on Conversation links and the back link navigate in place; modified clicks
-// (new tab, new window) keep the browser's default.
-document.addEventListener("click", (event) => {
+// (new tab, new window) keep the browser's default. Opening a Conversation from the list
+// marks the history entry, so the back link can go back instead of stacking a new "/".
+function onClick(event: MouseEvent): void {
 	const link = event.target instanceof Element ? event.target.closest("a") : null;
 	const plain = event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey;
 	if (!link || !plain || event.defaultPrevented || link.origin !== location.origin || link.target) return;
 	if (link.pathname !== "/" && !conversationPath.test(link.pathname)) return;
 	event.preventDefault();
 	if (link.pathname === location.pathname) return;
-	history.pushState(null, "", link.pathname);
+	const state: unknown = history.state;
+	if (link.pathname === "/" && typeof state === "object" && state !== null && "fromList" in state) {
+		history.back(); // popstate routes
+		return;
+	}
+	history.pushState(location.pathname === "/" ? { fromList: true } : null, "", link.pathname);
 	route({ animate: true });
-});
+}
 
-// Back, Forward, and the phone's back gesture. Never push history from here.
-addEventListener("popstate", () => route({ animate: true }));
+// Back, Forward, and the phone's back gesture. Never push history from here. When the
+// browser already animated the swipe, don't animate it a second time.
+function onPopState(event: PopStateEvent): void {
+	route({ animate: !event.hasUAVisualTransition });
+}
 
 // ── Start ─────────────────────────────────────────────────────────────────────────────
 
@@ -559,6 +673,8 @@ try {
 	await loadConversations();
 	listReady = true;
 	for (const [message, isNew] of early.splice(0)) applyLiveMessage(message, isNew);
+	document.addEventListener("click", onClick);
+	addEventListener("popstate", onPopState);
 	route({ animate: false });
 	fillPreviews();
 } catch (error: unknown) {

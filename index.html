@@ -288,6 +288,36 @@
 			}
 		}
 
+		.attachment {
+			position: relative;
+			margin: 0;
+
+			img,
+			video {
+				display: block;
+				max-inline-size: min(100%, 16rem);
+				max-block-size: 20rem;
+				block-size: auto;
+
+				border-radius: var(--bubble-radius);
+			}
+
+			audio {
+				max-inline-size: 100%;
+			}
+
+			> .placeholder,
+			> a {
+				display: block;
+				padding: 0.4375rem 0.75rem;
+
+				color: inherit;
+
+				background: var(--received-bubble);
+				border-radius: var(--bubble-radius);
+			}
+		}
+
 		.placeholder {
 			display: block;
 

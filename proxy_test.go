@@ -6,9 +6,12 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/png"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -56,21 +59,29 @@ func runFakeImsg(transcriptPath, logPath string) {
 			ID     json.RawMessage `json:"id"`
 			Method string          `json:"method"`
 			Params struct {
-				Message json.RawMessage `json:"message"`
-				ChatID  int64           `json:"chat_id"`
+				Message    json.RawMessage `json:"message"`
+				ChatID     int64           `json:"chat_id"`
+				SinceRowID int64           `json:"since_rowid"`
 			} `json:"params"`
 		}
 		must(json.Unmarshal([]byte(rec.Line), &msg))
 		switch {
 		case rec.Dir == "in":
-			keyByID[string(msg.ID)] = requestKey(msg.Method, msg.Params.ChatID)
+			keyByID[string(msg.ID)] = requestKey(msg.Method, msg.Params.ChatID, msg.Params.SinceRowID)
 		case msg.Method != "":
 			var n map[string]any
 			must(json.Unmarshal([]byte(rec.Line), &n))
 			notifications = append(notifications, n)
 		case msg.ID != nil:
 			key := keyByID[string(msg.ID)]
-			for _, k := range []string{key, strings.Split(key, "#")[0]} {
+			// Record under the exact key and its fallbacks (without cursor, then method only).
+			parts := strings.Split(key, "#")
+			keys := []string{key}
+			if len(parts) == 3 {
+				keys = append(keys, parts[0]+"#"+parts[1])
+			}
+			keys = append(keys, parts[0])
+			for _, k := range keys {
 				if _, seen := recorded[k]; !seen {
 					recorded[k] = json.RawMessage(rec.Line)
 				}
@@ -115,7 +126,10 @@ func runFakeImsg(transcriptPath, logPath string) {
 		case "watch.unsubscribe":
 			reply(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": map[string]any{"ok": true}})
 		default:
-			line, ok := recorded[requestKey(req.Method, req.Params.ChatID)]
+			line, ok := recorded[requestKey(req.Method, req.Params.ChatID, req.Params.SinceRowID)]
+			if !ok {
+				line, ok = recorded[requestKey(req.Method, req.Params.ChatID, 0)]
+			}
 			if !ok {
 				line, ok = recorded[req.Method]
 			}
@@ -124,6 +138,9 @@ func runFakeImsg(transcriptPath, logPath string) {
 				reply(map[string]any{"jsonrpc": "2.0", "id": req.ID, "error": map[string]any{"code": -32601, "message": "fake imsg: no recorded response for " + req.Method}})
 				continue
 			}
+			// Transcripts use the synthetic home /Users/me; map it onto this test's $HOME so a
+			// test can put files where imsg says they are.
+			line = json.RawMessage(strings.ReplaceAll(string(line), "/Users/me/", os.Getenv("HOME")+"/"))
 			var resp map[string]any
 			must(json.Unmarshal(line, &resp))
 			resp["id"] = req.ID
@@ -132,12 +149,17 @@ func runFakeImsg(transcriptPath, logPath string) {
 	}
 }
 
-// requestKey lets the fake answer per Conversation when a transcript holds several.
-func requestKey(method string, chatID int64) string {
-	if chatID == 0 {
+// requestKey lets the fake answer per Conversation (and per cursor) when a transcript holds
+// several responses for one method.
+func requestKey(method string, chatID, sinceRowID int64) string {
+	switch {
+	case chatID == 0:
 		return method
+	case sinceRowID == 0:
+		return fmt.Sprintf("%s#%d", method, chatID)
+	default:
+		return fmt.Sprintf("%s#%d#%d", method, chatID, sinceRowID)
 	}
-	return fmt.Sprintf("%s#%d", method, chatID)
 }
 
 func must(err error) {
@@ -713,8 +735,12 @@ func TestConversationPathsServeThePage(t *testing.T) {
 			t.Errorf("GET %s: status %d, Content-Type %q; want the page", path, got.Code, got.Header().Get("Content-Type"))
 		}
 	}
-	if got := p.get(t, "/conversations/not-a-number", tailnetAddr).Code; got != http.StatusNotFound {
-		t.Errorf("GET /conversations/not-a-number: status %d, want 404", got)
+	// IDs are plain digits on both sides: the page routes only /conversations/\d+, so the
+	// Proxy refuses signs and leading zeros instead of serving a page that can't open them.
+	for _, path := range []string{"/conversations/not-a-number", "/conversations/+21", "/conversations/-3", "/conversations/021"} {
+		if got := p.get(t, path, tailnetAddr).Code; got != http.StatusNotFound {
+			t.Errorf("GET %s: status %d, want 404", path, got)
+		}
 	}
 }
 
@@ -730,5 +756,72 @@ func TestThePageScriptIsServedAsJavaScript(t *testing.T) {
 	}
 	if page := p.get(t, "/", tailnetAddr).Body.String(); !strings.Contains(page, `<script type="module" src="/app.js"></script>`) {
 		t.Error("the page doesn't load /app.js as a module")
+	}
+}
+
+func TestMessagesListTheirAttachmentsAndWhetherTheyreOnTheMac(t *testing.T) {
+	p := startProxy(t, "imsg-0.21.0-02.jsonl")
+	group := decode[[]Message](t, p.get(t, "/api/conversations/21/messages", tailnetAddr))
+
+	for _, tc := range []struct {
+		id   int64
+		want []Attachment
+	}{
+		{183536, []Attachment{{Name: "attachment-0.HEIC", Kind: "image"}}},
+		{183458, []Attachment{{Name: "attachment-2.HEIC", Kind: "image", Missing: true}}},
+		{183439, []Attachment{{Name: "attachment-6.mov", Kind: "video", Missing: true}}},
+		{183330, nil}, // a link preview's payload isn't a file to show
+	} {
+		if got := messageByID(t, group, tc.id).Attachments; fmt.Sprint(got) != fmt.Sprint(tc.want) {
+			t.Errorf("Message %d attachments = %+v, want %+v", tc.id, got, tc.want)
+		}
+	}
+}
+
+// writeHEIC makes a small real HEIC image at path (Go writes a PNG; macOS's sips converts it).
+func writeHEIC(t *testing.T, path string) {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, 8, 8))
+	pngPath := filepath.Join(t.TempDir(), "source.png")
+	f, err := os.Create(pngPath)
+	must(err)
+	must(png.Encode(f, img))
+	must(f.Close())
+	must(os.MkdirAll(filepath.Dir(path), 0o755))
+	if out, err := exec.Command("sips", "-s", "format", "heic", pngPath, "--out", path).CombinedOutput(); err != nil {
+		t.Fatalf("sips: %v\n%s", err, out)
+	}
+}
+
+func TestAnOnDiskHEICIsServedAsJPEG(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home) // imsg reports paths under ~/Library/Messages/Attachments
+	writeHEIC(t, filepath.Join(home, "Library/Messages/Attachments/00/00/0000/attachment-0.HEIC"))
+	p := startProxy(t, "imsg-0.21.0-05.jsonl")
+
+	got := p.get(t, "/api/conversations/21/messages/183536/attachments/0", tailnetAddr)
+
+	if got.Code != http.StatusOK || got.Header().Get("Content-Type") != "image/jpeg" || !bytes.HasPrefix(got.Body.Bytes(), []byte{0xFF, 0xD8}) {
+		t.Errorf("status %d, Content-Type %q, %d bytes; want a JPEG", got.Code, got.Header().Get("Content-Type"), got.Body.Len())
+	}
+	after := p.imsgRequests(t, "messages.after")
+	if len(after) != 1 || after[0]["since_rowid"] != 183535.0 || after[0]["chat_id"] != 21.0 || after[0]["attachments"] != true {
+		t.Errorf("messages.after requests = %v, want the one Message 183536 in Conversation 21", after)
+	}
+}
+
+// The Proxy serves only files imsg reports for that Message, and only when they're on disk.
+func TestAttachmentsNotOnTheMacOrNotReportedAreNotFound(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	p := startProxy(t, "imsg-0.21.0-05.jsonl")
+
+	for _, path := range []string{
+		"/api/conversations/21/messages/183458/attachments/0", // not downloaded on the Mac
+		"/api/conversations/21/messages/183536/attachments/1", // no such attachment
+		"/api/conversations/21/messages/183536/attachments/0", // reported, but the file isn't there
+	} {
+		if got := p.get(t, path, tailnetAddr).Code; got != http.StatusNotFound {
+			t.Errorf("GET %s: status %d, want 404", path, got)
+		}
 	}
 }

@@ -7,11 +7,17 @@ import (
 	"cmp"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log"
+	"mime"
 	"net"
 	"net/http"
 	"net/netip"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -33,6 +39,7 @@ func NewServer(engine *Engine) http.Handler {
 	mux.HandleFunc("GET /api/conversations", s.listConversations)
 	mux.HandleFunc("GET /api/conversations/{id}/messages", s.listMessages)
 	mux.HandleFunc("POST /api/conversations/{id}/messages", s.sendMessage)
+	mux.HandleFunc("GET /api/conversations/{id}/messages/{message}/attachments/{index}", s.serveAttachment)
 	mux.HandleFunc("GET /api/events", s.streamEvents)
 	// Any website open on a tailnet device could otherwise submit a form here and send
 	// Messages as me. This refuses cross-origin POSTs using the browser's own headers.
@@ -103,10 +110,18 @@ func serveScript(w http.ResponseWriter, r *http.Request) {
 	w.Write(script)
 }
 
+// pathID reads a numeric path value as the page writes it: plain digits, no sign, no leading
+// zeros, so the Proxy and the page's router agree on which paths name a Conversation.
+func pathID(r *http.Request, name string) (int64, bool) {
+	value := r.PathValue(name)
+	id, err := strconv.ParseInt(value, 10, 64)
+	return id, err == nil && id >= 0 && strconv.FormatInt(id, 10) == value
+}
+
 // serveConversationPage serves the same page at a Conversation's clean path, so a reload
 // or a bookmark opens it directly; the page reads the path.
 func serveConversationPage(w http.ResponseWriter, r *http.Request) {
-	if _, err := strconv.ParseInt(r.PathValue("id"), 10, 64); err != nil {
+	if _, ok := pathID(r, "id"); !ok {
 		http.NotFound(w, r)
 		return
 	}
@@ -123,13 +138,14 @@ const historyLimit = 100
 // listMessages serves a Conversation's last Messages, oldest first. ?limit=1 gives the
 // list its last-Message preview.
 func (s *server) listMessages(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
+	id, ok := pathID(r, "id")
+	if !ok {
 		http.Error(w, "bad Conversation id", http.StatusBadRequest)
 		return
 	}
 	limit := historyLimit
 	if v := r.URL.Query().Get("limit"); v != "" {
+		var err error
 		limit, err = strconv.Atoi(v)
 		if err != nil || limit < 1 || limit > historyLimit {
 			http.Error(w, "limit must be 1 to 100", http.StatusBadRequest)
@@ -204,8 +220,8 @@ func (s *server) streamEvents(w http.ResponseWriter, r *http.Request) {
 
 // sendMessage sends a form's text into a Conversation and reports whether it's confirmed.
 func (s *server) sendMessage(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
+	id, ok := pathID(r, "id")
+	if !ok {
 		http.Error(w, "bad Conversation id", http.StatusBadRequest)
 		return
 	}
@@ -222,4 +238,90 @@ func (s *server) sendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, result)
+}
+
+// Content types by Apple UTI; mime_type from imsg is unreliable (empty in history reads).
+var attachmentTypes = map[string]string{
+	"public.jpeg":               "image/jpeg",
+	"public.png":                "image/png",
+	"com.compuserve.gif":        "image/gif",
+	"public.heic":               "image/jpeg", // converted: Chrome doesn't display HEIC
+	"public.heif":               "image/jpeg",
+	"public.mpeg-4":             "video/mp4",
+	"com.apple.quicktime-movie": "video/quicktime",
+	"com.adobe.pdf":             "application/pdf",
+}
+
+// serveAttachment serves a file imsg reports for a Message, if it's on the Host Mac's disk.
+// iPhone photos (HEIC, about two thirds of received images) are converted to JPEG.
+func (s *server) serveAttachment(w http.ResponseWriter, r *http.Request) {
+	conversationID, ok1 := pathID(r, "id")
+	messageID, ok2 := pathID(r, "message")
+	index, ok3 := pathID(r, "index")
+	if !ok1 || !ok2 || !ok3 {
+		http.Error(w, "bad attachment path", http.StatusBadRequest)
+		return
+	}
+	file, err := s.engine.AttachmentFile(r.Context(), conversationID, messageID, int(index))
+	if errors.Is(err, errNoAttachment) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	path := file.Path
+	if file.UTI == "public.heic" || file.UTI == "public.heif" {
+		converted, err := convertToJPEG(path)
+		if errors.Is(err, fs.ErrNotExist) {
+			http.NotFound(w, r)
+			return
+		}
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		defer os.Remove(converted)
+		path = converted
+	}
+	f, err := os.Open(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	contentType := attachmentTypes[file.UTI]
+	if contentType == "" {
+		contentType = cmp.Or(mime.TypeByExtension(filepath.Ext(file.Name)), "application/octet-stream")
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("inline", map[string]string{"filename": file.Name}))
+	http.ServeContent(w, r, file.Name, info.ModTime(), f) // handles Range, so videos can seek
+}
+
+// convertToJPEG converts an image with macOS's sips into a temporary JPEG file.
+func convertToJPEG(path string) (string, error) {
+	if _, err := os.Stat(path); err != nil {
+		return "", err
+	}
+	out, err := os.CreateTemp("", "imessage-anywhere-*.jpg")
+	if err != nil {
+		return "", err
+	}
+	out.Close()
+	if output, err := exec.Command("sips", "-s", "format", "jpeg", path, "--out", out.Name()).CombinedOutput(); err != nil {
+		os.Remove(out.Name())
+		return "", fmt.Errorf("sips: %v: %s", err, output)
+	}
+	return out.Name(), nil
 }
