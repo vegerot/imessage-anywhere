@@ -107,3 +107,14 @@ Next:
 
 Next:
 - Ticket 03 (Live Messages).
+
+## 2026-11-12 — ✅ 03 Live Messages
+
+- ⚡ Each browser connection to `/api/events` (Server-Sent Events) gets its own imsg `watch.subscribe`, starting after `Last-Event-ID` (automatic EventSource reconnects) or `?since=` (the page's own reconnects), else at the tail; the Proxy unsubscribes when the browser leaves. Event IDs are row IDs and only move forward (edits reuse older IDs). A slow browser that fills its 256-Message buffer, or an imsg overflow, ends that stream; the browser resumes from its cursor. The read loop registers a subscription's channel before reading the next line, so a notification right after the response isn't lost.
+- 😴 Heartbeat: a named `heartbeat` event every 25 s (SSE comments never reach JavaScript); the page reconnects with `?since=` if it hears nothing for 60 s, because a browser that only receives never notices a connection that died while the Host Mac slept. Offline banner: "Can't reach the Host Mac. Reconnecting…".
+- 🧪 Seam tests: 11 pass, plus 3 runs under `-race`, clean. New: resume from Last-Event-ID (subscribes with since_rowid, events are the following rows), tail start + unsubscribe on disconnect, `?since=` cursor.
+- ✅ Checked live on the Host Mac (Chrome over loopback, note-to-self Conversation): a Message sent from the Host Mac appeared within ~0.5 s with its echo, and the row moved to the top; stopping the Proxy showed the banner; a Message sent while it was down (183580/183581) arrived after restart via Last-Event-ID with zero duplicates; two tabs both updated. Not directly checked: a Message typed on the iPhone (the watch reads database rows regardless of origin).
+- 🔬 Experiment: a page load took 4.6 s to show a Conversation. Not attachment metadata (0.49 s vs 0.50 s with/without); contention: chat 242's history took 0.50 s alone but 2.75 s with two preview reads in flight. Fix: preview workers wait for the open Conversation's load; it now shows in 2.5 s (history 0.66 s; the rest is the first list load after a restart).
+
+Next:
+- Ticket 04 (Send text).

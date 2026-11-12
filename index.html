@@ -35,6 +35,7 @@
 		--unread-dot-size: 0.5625rem; /* 9 pt */
 		--bubble-radius: 1.125rem;
 		--gutter: 0.75rem;
+		--banner-layer: 10;
 
 		accent-color: var(--accent);
 	}
@@ -161,6 +162,22 @@
 
 		color: var(--secondary-text);
 		overflow-wrap: anywhere;
+	}
+
+	#connection {
+		position: fixed;
+		inset-block-start: 0.75rem;
+		inset-inline: 0;
+		z-index: var(--banner-layer);
+		inline-size: fit-content;
+		margin: 0 auto;
+		padding: 0.375rem 0.875rem;
+
+		font-size: 0.8125rem;
+		color: white;
+
+		background: oklch(55% 0.19 25);
+		border-radius: 1rem;
 	}
 
 	/* The Conversation pane. */
@@ -372,6 +389,7 @@
 </style>
 </head>
 <body>
+	<p id="connection" role="status" hidden>Can’t reach the Host Mac. Reconnecting…</p>
 	<nav aria-label="Conversations">
 		<h1>Messages</h1>
 		<ul id="conversations"></ul>
@@ -471,13 +489,19 @@
 		return response.json();
 	}
 
+	// The open Conversation's history goes first: imsg's reads contend, and with previews in
+	// flight a 0.5 s history read took 2.75 s (measured 2026-11-12).
+	let conversationLoading = Promise.resolve();
+
 	// Previews need one request per Conversation, so they fill in after the list shows.
 	async function fillPreviews() {
 		const queue = [...rows];
 		const worker = async () => {
 			for (let entry = queue.shift(); entry; entry = queue.shift()) {
+				await conversationLoading;
 				const [id, row] = entry;
 				const [last] = await getJSON(`/api/conversations/${id}/messages?limit=1`).catch(() => []);
+				if (last) noteSeen(last);
 				row.querySelector(".preview").textContent = last ? last.text || last.placeholder || "" : "";
 			}
 		};
@@ -567,6 +591,12 @@
 	}
 
 	let openID = null;
+	let openMessages = [];
+	let lastEventID = 0; // the newest Message row ID seen anywhere: the live stream resumes after it
+
+	function noteSeen(message) {
+		lastEventID = Math.max(lastEventID, message.id);
+	}
 
 	async function openConversation(id) {
 		openID = id;
@@ -585,11 +615,80 @@
 		main.setAttribute("data-open", "");
 		main.replaceChildren(viewTemplate.content.cloneNode(true));
 		main.querySelector("h2").textContent = conversation.name;
-		const messages = await getJSON(`/api/conversations/${id}/messages`);
+		const loading = getJSON(`/api/conversations/${id}/messages`);
+		conversationLoading = loading.catch(() => {});
+		const messages = await loading;
 		if (openID !== id) return; // the user opened another Conversation meanwhile
+		messages.forEach(noteSeen);
+		openMessages = messages;
+		showMessages(conversation, { scrollToEnd: true });
+	}
+
+	function showMessages(conversation, { scrollToEnd }) {
 		const list = main.querySelector("#messages");
-		list.replaceChildren(...renderMessages(conversation, messages));
-		list.scrollTop = list.scrollHeight;
+		const nearEnd = list.scrollHeight - list.scrollTop - list.clientHeight < 80;
+		list.replaceChildren(...renderMessages(conversation, openMessages));
+		if (scrollToEnd || nearEnd) list.scrollTop = list.scrollHeight;
+	}
+
+	// A new or changed Message arrived live: update its row, and the open Conversation.
+	async function applyLiveMessage(message) {
+		const id = message.conversationId;
+		const conversation = conversations.get(id);
+		if (!conversation) {
+			await loadConversations(); // a Conversation the list doesn't have yet
+			fillPreviews();
+			return;
+		}
+		const row = rows.get(id);
+		row.querySelector(".preview").textContent = message.text || message.placeholder || "";
+		if (message.createdAt >= conversation.lastMessageAt) {
+			conversation.lastMessageAt = message.createdAt;
+			const when = row.querySelector(".when");
+			when.dateTime = message.createdAt;
+			when.textContent = formatWhen(new Date(message.createdAt));
+			list.prepend(row);
+		}
+		if (!message.fromMe && openID !== id) row.toggleAttribute("data-unread", true);
+		if (openID !== id) return;
+		const index = openMessages.findIndex((m) => m.id === message.id);
+		if (index >= 0) openMessages[index] = message; // an edit, or a replay after reconnecting
+		else openMessages.push(message);
+		showMessages(conversation, { scrollToEnd: message.fromMe });
+	}
+
+	const connection = document.querySelector("#connection");
+	const quietLimit = 60_000; // the Proxy sends a heartbeat every 25 s
+	let source;
+	let watchdog;
+
+	function setOnline(online) {
+		connection.hidden = online;
+	}
+
+	// EventSource reconnects by itself after errors, sending Last-Event-ID. The watchdog
+	// covers the case it can't see: a connection that died silently (the Host Mac slept).
+	function connect() {
+		source?.close();
+		source = new EventSource(lastEventID ? `/api/events?since=${lastEventID}` : "/api/events");
+		source.onopen = () => setOnline(true);
+		source.onerror = () => setOnline(false);
+		source.addEventListener("heartbeat", resetWatchdog);
+		source.addEventListener("message", (event) => {
+			resetWatchdog();
+			const message = JSON.parse(event.data);
+			noteSeen(message);
+			applyLiveMessage(message);
+		});
+		resetWatchdog();
+	}
+
+	function resetWatchdog() {
+		clearTimeout(watchdog);
+		watchdog = setTimeout(() => {
+			setOnline(false);
+			connect();
+		}, quietLimit);
 	}
 
 	function route() {
@@ -600,15 +699,24 @@
 		});
 	}
 
-	try {
-		for (const conversation of await getJSON("/api/conversations")) {
+	async function loadConversations() {
+		const fresh = await getJSON("/api/conversations");
+		conversations.clear();
+		rows.clear();
+		for (const conversation of fresh) {
 			conversations.set(conversation.id, conversation);
 			rows.set(conversation.id, renderRow(conversation));
 		}
 		list.replaceChildren(...rows.values());
+		rows.get(openID)?.querySelector("a").setAttribute("aria-current", "page");
+	}
+
+	try {
+		await loadConversations();
 		addEventListener("hashchange", route);
 		route();
 		fillPreviews();
+		connect();
 	} catch (error) {
 		status.textContent = `Couldn't load Conversations: ${error.message}`;
 	}

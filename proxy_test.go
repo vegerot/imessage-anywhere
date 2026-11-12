@@ -410,3 +410,97 @@ func TestContentlessMessagesAreLeftOut(t *testing.T) {
 		}
 	}
 }
+
+type sseEvent struct{ ID, Event, Data string }
+
+// readEvents opens the Proxy's event stream on a real HTTP server and returns the first n
+// events (comments such as heartbeats are skipped), then disconnects.
+func readEvents(t *testing.T, p *proxyUnderTest, path string, header http.Header, n int) []sseEvent {
+	t.Helper()
+	server := httptest.NewServer(p.handler) // loopback, which the source filter allows
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+path, nil)
+	for k, v := range header {
+		req.Header[k] = v
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if ct := resp.Header.Get("Content-Type"); ct != "text/event-stream" {
+		t.Fatalf("Content-Type = %q, want text/event-stream", ct)
+	}
+	var events []sseEvent
+	var current sseEvent
+	scanner := bufio.NewScanner(resp.Body)
+	for len(events) < n && scanner.Scan() {
+		line := scanner.Text()
+		switch {
+		case line == "":
+			if current.Data != "" {
+				events = append(events, current)
+			}
+			current = sseEvent{}
+		case strings.HasPrefix(line, "id: "):
+			current.ID = strings.TrimPrefix(line, "id: ")
+		case strings.HasPrefix(line, "event: "):
+			current.Event = strings.TrimPrefix(line, "event: ")
+		case strings.HasPrefix(line, "data: "):
+			current.Data = strings.TrimPrefix(line, "data: ")
+		}
+	}
+	return events
+}
+
+func TestLiveMessagesResumeFromLastEventID(t *testing.T) {
+	p := startProxy(t, "imsg-0.21.0-p0.jsonl")
+
+	events := readEvents(t, p, "/api/events", http.Header{"Last-Event-Id": {"183575"}}, 2)
+
+	var ids []string
+	for _, e := range events {
+		ids = append(ids, e.ID)
+		var m Message
+		if err := json.Unmarshal([]byte(e.Data), &m); err != nil || m.ConversationID != 242 || fmt.Sprint(m.ID) != e.ID {
+			t.Errorf("event %+v doesn't carry its Message (decoded %+v, err %v)", e, m, err)
+		}
+	}
+	if want := []string{"183576", "183577"}; fmt.Sprint(ids) != fmt.Sprint(want) {
+		t.Errorf("event IDs = %v, want %v (the rows after Last-Event-ID, which are database row IDs)", ids, want)
+	}
+	subs := p.imsgRequests(t, "watch.subscribe")
+	if len(subs) != 1 || subs[0]["since_rowid"] != 183575.0 || subs[0]["attachments"] != true {
+		t.Errorf("watch.subscribe requests = %v, want one with since_rowid 183575 and attachments", subs)
+	}
+}
+
+func TestLiveMessagesStartAtTheTailWithoutACursorAndUnsubscribeOnDisconnect(t *testing.T) {
+	p := startProxy(t, "imsg-0.21.0-p0.jsonl")
+
+	readEvents(t, p, "/api/events", nil, 1)
+
+	subs := p.imsgRequests(t, "watch.subscribe")
+	if len(subs) != 1 || subs[0]["since_rowid"] != nil {
+		t.Errorf("watch.subscribe requests = %v, want one without since_rowid (start at the tail)", subs)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for len(p.imsgRequests(t, "watch.unsubscribe")) == 0 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got := p.imsgRequests(t, "watch.unsubscribe"); len(got) != 1 || got[0]["subscription"] != 1.0 {
+		t.Errorf("watch.unsubscribe requests = %v, want one for subscription 1 after the browser left", got)
+	}
+}
+
+func TestLiveMessagesAcceptAnExplicitCursorForManualReconnects(t *testing.T) {
+	p := startProxy(t, "imsg-0.21.0-p0.jsonl")
+
+	events := readEvents(t, p, "/api/events?since=183576", nil, 1)
+
+	if len(events) != 1 || events[0].ID != "183577" {
+		t.Errorf("events = %+v, want only 183577", events)
+	}
+}

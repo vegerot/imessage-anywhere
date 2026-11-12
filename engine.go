@@ -18,21 +18,40 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 type Engine struct {
 	stdin io.WriteCloser
 	done  chan struct{} // closed when the child exits
 
-	mu      sync.Mutex
-	nextID  int
-	pending map[string]chan rpcResponse
+	mu            sync.Mutex
+	nextID        int
+	pending       map[string]pendingCall
+	subscriptions map[int]chan Message
+}
+
+type pendingCall struct {
+	response  chan rpcResponse
+	subscribe bool // a watch.subscribe call: register its channel before reading on
 }
 
 type rpcResponse struct {
-	Result json.RawMessage
-	Error  *rpcError
+	Result       json.RawMessage
+	Error        *rpcError
+	Subscription *Subscription
 }
+
+// Subscription delivers new Messages until Unsubscribe, or until imsg drops it (overflow,
+// exit); then Messages is closed and the browser reconnects from its cursor.
+type Subscription struct {
+	ID       int
+	Messages <-chan Message
+}
+
+// subscriptionBuffer bounds how far one slow browser may fall behind before its stream is
+// ended; it then reconnects from its cursor, so nothing is lost.
+const subscriptionBuffer = 256
 
 type rpcError struct {
 	Code    int    `json:"code"`
@@ -60,7 +79,7 @@ func StartEngine(cmd *exec.Cmd) (*Engine, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	e := &Engine{stdin: stdin, done: make(chan struct{}), pending: map[string]chan rpcResponse{}}
+	e := &Engine{stdin: stdin, done: make(chan struct{}), pending: map[string]pendingCall{}, subscriptions: map[int]chan Message{}}
 	go func() {
 		e.readLoop(stdout)
 		cmd.Wait()
@@ -80,11 +99,17 @@ func (e *Engine) Close() {
 }
 
 func (e *Engine) readLoop(stdout io.Reader) {
+	defer e.closeSubscriptions()
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 0, 1<<20), 64<<20) // one Conversation list can be large
 	for scanner.Scan() {
 		var msg struct {
 			ID     json.RawMessage `json:"id"`
+			Method string          `json:"method"`
+			Params struct {
+				Subscription int         `json:"subscription"`
+				Message      imsgMessage `json:"message"`
+			} `json:"params"`
 			Result json.RawMessage `json:"result"`
 			Error  *rpcError       `json:"error"`
 		}
@@ -92,47 +117,127 @@ func (e *Engine) readLoop(stdout io.Reader) {
 			fmt.Fprintf(os.Stderr, "engine: unparsable line from imsg: %v\n", err)
 			continue
 		}
+		switch msg.Method {
+		case "message":
+			e.deliver(msg.Params.Subscription, msg.Params.Message.toMessage())
+			continue
+		case "watch.overflow":
+			e.dropSubscription(msg.Params.Subscription)
+			continue
+		}
 		id, _ := strconv.Unquote(string(msg.ID))
 		e.mu.Lock()
-		ch := e.pending[id]
+		call, ok := e.pending[id]
 		delete(e.pending, id)
-		e.mu.Unlock()
-		if ch != nil {
-			ch <- rpcResponse{Result: msg.Result, Error: msg.Error}
+		resp := rpcResponse{Result: msg.Result, Error: msg.Error}
+		if ok && call.subscribe && msg.Error == nil {
+			var result struct{ Subscription int }
+			if json.Unmarshal(msg.Result, &result) == nil {
+				ch := make(chan Message, subscriptionBuffer)
+				e.subscriptions[result.Subscription] = ch
+				resp.Subscription = &Subscription{ID: result.Subscription, Messages: ch}
+			}
 		}
+		e.mu.Unlock()
+		if ok {
+			call.response <- resp
+		}
+	}
+}
+
+func (e *Engine) deliver(subscription int, m Message) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	ch, ok := e.subscriptions[subscription]
+	if !ok {
+		return // already unsubscribed
+	}
+	select {
+	case ch <- m:
+	default: // that browser fell far behind: end its stream; it resumes from its cursor
+		delete(e.subscriptions, subscription)
+		close(ch)
+	}
+}
+
+func (e *Engine) dropSubscription(subscription int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if ch, ok := e.subscriptions[subscription]; ok {
+		delete(e.subscriptions, subscription)
+		close(ch)
+	}
+}
+
+func (e *Engine) closeSubscriptions() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for id, ch := range e.subscriptions {
+		delete(e.subscriptions, id)
+		close(ch)
 	}
 }
 
 // call sends one JSON-RPC request and decodes its result into out.
 func (e *Engine) call(ctx context.Context, method string, params any, out any) error {
-	ch := make(chan rpcResponse, 1)
+	resp, err := e.request(ctx, method, params, false)
+	if err != nil || out == nil {
+		return err
+	}
+	return json.Unmarshal(resp.Result, out)
+}
+
+func (e *Engine) request(ctx context.Context, method string, params any, subscribe bool) (rpcResponse, error) {
+	call := pendingCall{response: make(chan rpcResponse, 1), subscribe: subscribe}
 	e.mu.Lock()
 	e.nextID++
 	id := strconv.Itoa(e.nextID)
-	e.pending[id] = ch
+	e.pending[id] = call
 	line, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params})
 	if err == nil {
 		_, err = e.stdin.Write(append(line, '\n'))
 	}
 	e.mu.Unlock()
 	if err != nil {
-		return err
+		return rpcResponse{}, err
 	}
 	select {
-	case resp := <-ch:
+	case resp := <-call.response:
 		if resp.Error != nil {
-			return resp.Error
+			return rpcResponse{}, resp.Error
 		}
-		if out == nil {
-			return nil
-		}
-		return json.Unmarshal(resp.Result, out)
+		return resp, nil
 	case <-ctx.Done():
 		e.forget(id)
-		return ctx.Err()
+		return rpcResponse{}, ctx.Err()
 	case <-e.done:
-		return errEngineGone
+		return rpcResponse{}, errEngineGone
 	}
+}
+
+// Subscribe streams new Messages from all Conversations, starting after row sinceRowID,
+// or at the current tail when sinceRowID is 0.
+func (e *Engine) Subscribe(ctx context.Context, sinceRowID int64) (*Subscription, error) {
+	params := map[string]any{"attachments": true}
+	if sinceRowID > 0 {
+		params["since_rowid"] = sinceRowID
+	}
+	resp, err := e.request(ctx, "watch.subscribe", params, true)
+	if err != nil {
+		return nil, err
+	}
+	if resp.Subscription == nil {
+		return nil, fmt.Errorf("imsg: watch.subscribe returned no subscription: %s", resp.Result)
+	}
+	return resp.Subscription, nil
+}
+
+// Unsubscribe ends a Subscription; its Messages channel is closed.
+func (e *Engine) Unsubscribe(s *Subscription) {
+	e.dropSubscription(s.ID)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	e.call(ctx, "watch.unsubscribe", map[string]any{"subscription": s.ID}, nil)
 }
 
 func (e *Engine) forget(id string) {

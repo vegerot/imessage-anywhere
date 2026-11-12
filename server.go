@@ -4,11 +4,14 @@ package main
 // the Engine client.
 
 import (
+	"cmp"
 	_ "embed"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/netip"
 	"strconv"
+	"time"
 )
 
 const conversationListLimit = 100
@@ -23,6 +26,7 @@ func NewServer(engine *Engine) http.Handler {
 	s.mux.HandleFunc("GET /{$}", servePage)
 	s.mux.HandleFunc("GET /api/conversations", s.listConversations)
 	s.mux.HandleFunc("GET /api/conversations/{id}/messages", s.listMessages)
+	s.mux.HandleFunc("GET /api/events", s.streamEvents)
 	return s
 }
 
@@ -87,4 +91,62 @@ func (s *server) listMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, messages)
+}
+
+// heartbeatInterval keeps traffic flowing so the page can tell a live stream from one
+// that died silently (the Host Mac sleeps every night; a receiving browser never notices).
+const heartbeatInterval = 25 * time.Second
+
+// streamEvents is a Server-Sent Events stream of new Messages. Each browser connection has
+// its own imsg subscription, starting after its Last-Event-ID (sent automatically when
+// EventSource reconnects) or ?since= (for the page's own reconnects), else at the tail.
+func (s *server) streamEvents(w http.ResponseWriter, r *http.Request) {
+	cursor := int64(0)
+	if v := cmp.Or(r.Header.Get("Last-Event-ID"), r.URL.Query().Get("since")); v != "" {
+		var err error
+		if cursor, err = strconv.ParseInt(v, 10, 64); err != nil || cursor < 0 {
+			http.Error(w, "bad cursor", http.StatusBadRequest)
+			return
+		}
+	}
+	sub, err := s.engine.Subscribe(r.Context(), cursor)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer s.engine.Unsubscribe(sub)
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-store")
+	flusher := http.NewResponseController(w)
+	fmt.Fprint(w, ": connected\n\n")
+	flusher.Flush()
+
+	heartbeat := time.NewTicker(heartbeatInterval)
+	defer heartbeat.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-heartbeat.C:
+			// A named event, not an SSE comment: comments never reach the page's JavaScript.
+			fmt.Fprint(w, "event: heartbeat\ndata: {}\n\n")
+		case m, ok := <-sub.Messages:
+			if !ok {
+				return // imsg ended the subscription; the browser reconnects from its cursor
+			}
+			data, err := json.Marshal(m)
+			if err != nil {
+				continue
+			}
+			// Edits and unsends reuse an older row ID; only new rows move the cursor, so a
+			// reconnect never replays from too far back.
+			if m.ID > cursor {
+				cursor = m.ID
+				fmt.Fprintf(w, "id: %d\n", m.ID)
+			}
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", data)
+		}
+		flusher.Flush()
+	}
 }
