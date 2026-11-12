@@ -29,6 +29,7 @@ func NewServer(engine *Engine) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", servePage)
 	mux.HandleFunc("GET /conversations/{id}", serveConversationPage)
+	mux.HandleFunc("GET /app.js", serveScript)
 	mux.HandleFunc("GET /api/conversations", s.listConversations)
 	mux.HandleFunc("GET /api/conversations/{id}/messages", s.listMessages)
 	mux.HandleFunc("POST /api/conversations/{id}/messages", s.sendMessage)
@@ -82,12 +83,24 @@ func (s *server) listConversations(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, conversations)
 }
 
+// The page's code is TypeScript (app.ts). This type-checks it and compiles it to app.js,
+// which is committed so that `go build` needs no JavaScript tools.
+//go:generate npx --yes --package=typescript@7.0.2 tsc --project .
+
 //go:embed index.html
 var page []byte
+
+//go:embed app.js
+var script []byte
 
 func servePage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write(page)
+}
+
+func serveScript(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+	w.Write(script)
 }
 
 // serveConversationPage serves the same page at a Conversation's clean path, so a reload

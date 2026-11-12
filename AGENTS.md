@@ -10,6 +10,11 @@ This folder is its own project root inside the `ai-conversations` archive. Paths
 2. Read the newest entries in [progress.md](progress.md).
 3. Check the working copy (`sl status`) and any live state against the last handoff before acting.
 
+## Building
+
+- After editing `app.ts`, run `go generate ./...` (type-checks it and rewrites `app.js`; commit both). `scripts/install-launch-agent.sh` runs it before building.
+- `go test ./...` runs the seam tests; `scripts/install-launch-agent.sh` builds, signs, and restarts the launchd agent that serves the page.
+
 ## Commits
 
 Commit after each milestone, together with its `progress.md` entry. Other agents work in this archive at the same time, so commit named paths under `imessage-anywhere/` only (`sl add <paths>` then `sl commit <paths>`), never `--addremove`.

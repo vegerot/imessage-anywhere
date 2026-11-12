@@ -717,3 +717,18 @@ func TestConversationPathsServeThePage(t *testing.T) {
 		t.Errorf("GET /conversations/not-a-number: status %d, want 404", got)
 	}
 }
+
+// The page's code is TypeScript (app.ts), compiled by `go generate` into app.js, which the
+// Proxy embeds and serves as a module.
+func TestThePageScriptIsServedAsJavaScript(t *testing.T) {
+	p := startProxy(t, "imsg-0.21.0-01.jsonl")
+
+	got := p.get(t, "/app.js", tailnetAddr)
+
+	if got.Code != http.StatusOK || !strings.HasPrefix(got.Header().Get("Content-Type"), "text/javascript") || !strings.Contains(got.Body.String(), "EventSource") {
+		t.Errorf("GET /app.js: status %d, Content-Type %q; want the page's JavaScript", got.Code, got.Header().Get("Content-Type"))
+	}
+	if page := p.get(t, "/", tailnetAddr).Body.String(); !strings.Contains(page, `<script type="module" src="/app.js"></script>`) {
+		t.Error("the page doesn't load /app.js as a module")
+	}
+}

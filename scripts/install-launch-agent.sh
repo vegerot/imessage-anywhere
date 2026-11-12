@@ -8,6 +8,7 @@ label=com.vegerot.imessage-anywhere
 plist="$HOME/Library/LaunchAgents/$label.plist"
 
 binary="$HOME/.local/bin/imessage-anywhere"
+go generate ./... # type-check app.ts and compile it to app.js
 go build -o "$binary" .
 # Sign with a stable identity: macOS ties a Full Disk Access grant to the program's
 # designated requirement. Go's default ad-hoc signature makes that the code hash, which
