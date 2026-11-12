@@ -129,3 +129,23 @@ Next:
 
 Next:
 - Ticket 05 (Attachments: find out, then build) or 07 (Always running); both are ready.
+
+## 2026-11-12 — 05 Attachments: experiment blocked on Max
+
+- 🔬 Hypothesis: viewing a Conversation in Messages.app downloads its attachments. Candidates (counts only): chat 1947 has 0 of 11 recent received images on disk and 0 unread; group 21 has 1 of 13. Attempt: `open "sms:<handle>"` for chat 1947, then re-count after 15 s: still 0 of 11, but a window capture showed the link opened an empty "New Message" draft, not the Conversation, so the hypothesis is untested. imsg's docs have no download path.
+- Next step needs a computer-use grant on Messages.app (questions-for-max item 7). Not built yet: serving on-disk attachments and HEIC conversion, which would help ~2% of recent images until the experiment says how to bring the rest down.
+
+Next:
+- Ticket 07 (Always running), then back to 05 when Max is here.
+
+## 2026-11-12 — 07 Always running: installed, waiting for its Full Disk Access grant
+
+- 🚀 `launchd/com.vegerot.imessage-anywhere.plist` (RunAtLoad, KeepAlive, ThrottleInterval 30 s, log at `~/Library/Logs/imessage-anywhere.log`) and `scripts/install-launch-agent.sh`, which builds into `~/.local/bin/imessage-anywhere` (so repo rebuilds never disturb the agent), signs it, copies the plist, and bootstraps the agent. Installed and running on the Host Mac.
+- 🔬 Attribution, verified: under launchd macOS checks the Proxy's own binary for Full Disk Access, not Rex Server. The agent's first run logged imsg's reason ("…grant Full Disk Access to the supervising process…") plus the Proxy's own instruction naming `~/.local/bin/imessage-anywhere`; launchd shows last exit code 1 and "spawn scheduled" (retrying).
+- 🔏 Go's default build is ad-hoc signed (`Identifier=a.out`, `flags=adhoc,linker-signed`), so its designated requirement is the code hash and, I infer, a grant wouldn't survive a rebuild. The install script now signs with the Mac's Apple Development identity and identifier `com.vegerot.imessage-anywhere`; the designated requirement becomes identifier + certificate. Whether the grant survives a rebuild is unverified until the grant exists.
+- ✅ Startup readiness (story 44): the Proxy asks imsg for `status` and exits with an actionable message when the database isn't readable (seam tests with the real status and a synthetic no-access status: 18 pass). A missing tunnel address exits with "can't assign requested address" (checked with `-listen 172.16.9.9:7171`), so launchd retries until WireGuard is up. Failed sends are logged with imsg's reason (e.g. a missing Automation grant).
+- Meanwhile the hand-run Proxy (from Rex, which holds a grant) keeps the page up; the agent fails its readiness check before binding the port, so they don't collide.
+- Pending, needs Max: the grant (questions-for-max item 8); then check launchd reads and sends, the Automation prompt, and a rebuild.
+
+Next:
+- After Max's grant: finish 07. 05 needs Max too (item 7). Meanwhile: code review of everything so far.

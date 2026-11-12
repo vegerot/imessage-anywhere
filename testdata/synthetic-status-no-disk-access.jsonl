@@ -1,0 +1,2 @@
+{"t": 0, "dir": "in", "line": "{\"jsonrpc\": \"2.0\", \"id\": \"status\", \"method\": \"status\", \"params\": {}}"}
+{"t": 0.01, "dir": "out", "line": "{\"jsonrpc\": \"2.0\", \"id\": \"status\", \"result\": {\"version\": \"0.21.0\", \"protocol_version\": 1, \"database\": {\"path\": \"/Users/me/Library/Messages/chat.db\", \"ready\": false, \"error\": \"authorization denied (code: 23)\"}, \"bridge\": {\"ready\": false}, \"contacts\": {\"available\": false}, \"methods\": [\"initialize\", \"status\"]}}"}

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  iMessage Anywhere: runs the Proxy at login and keeps it running.
+  Installed by scripts/install-launch-agent.sh. launchd restarts the Proxy whenever it exits:
+  after a crash, while Full Disk Access is missing, or while the WireGuard tunnel (and so
+  172.16.1.2) isn't up yet. ThrottleInterval spaces those retries 30 s apart.
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.vegerot.imessage-anywhere</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/bytedance/.local/bin/imessage-anywhere</string>
+		<string>-imsg</string>
+		<string>/opt/homebrew/bin/imsg</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>ThrottleInterval</key>
+	<integer>30</integer>
+	<key>StandardOutPath</key>
+	<string>/Users/bytedance/Library/Logs/imessage-anywhere.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/bytedance/Library/Logs/imessage-anywhere.log</string>
+</dict>
+</plist>

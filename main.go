@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log"
 	"net"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 func main() {
@@ -25,6 +27,12 @@ func main() {
 	engine, err := StartEngine(cmd)
 	if err != nil {
 		log.Fatalf("starting imsg: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	err = engine.Ready(ctx)
+	cancel()
+	if err != nil {
+		log.Fatal(err) // launchd retries; the grant takes effect on the next start
 	}
 	handler := NewServer(engine)
 

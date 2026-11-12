@@ -8,6 +8,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/netip"
 	"strconv"
@@ -171,6 +172,8 @@ func (s *server) sendMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := s.engine.Send(r.Context(), id, text)
 	if err != nil {
+		// e.g. the Automation permission (control Messages) is missing; the log says why.
+		log.Printf("send to Conversation %d failed: %v", id, err)
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}

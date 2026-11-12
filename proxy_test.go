@@ -583,3 +583,21 @@ func TestCrossSiteSendsAreRefused(t *testing.T) {
 		t.Errorf("imsg got send requests %v, want none", sends)
 	}
 }
+
+func TestReadyWhenImsgCanReadTheMessagesDatabase(t *testing.T) {
+	p := startProxy(t, "imsg-0.21.0-01.jsonl")
+
+	if err := p.engine.Ready(context.Background()); err != nil {
+		t.Errorf("Ready() = %v, want nil", err)
+	}
+}
+
+func TestNotReadyExplainsTheMissingFullDiskAccess(t *testing.T) {
+	p := startProxy(t, "synthetic-status-no-disk-access.jsonl")
+
+	err := p.engine.Ready(context.Background())
+
+	if err == nil || !strings.Contains(err.Error(), "authorization denied") || !strings.Contains(err.Error(), "Full Disk Access") {
+		t.Errorf("Ready() = %v, want imsg's reason and how to grant Full Disk Access", err)
+	}
+}

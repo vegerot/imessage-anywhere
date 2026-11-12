@@ -510,3 +510,26 @@ func (e *Engine) Send(ctx context.Context, conversationID int64, text string) (S
 		return SendResult{}, fmt.Errorf("%w: %v", errNotSent, err)
 	}
 }
+
+// Ready checks that imsg can read the Messages database. Without Full Disk Access it
+// can't, and the error says which program needs the grant: the Proxy itself when launchd
+// runs it, or the terminal app when it runs in a terminal.
+func (e *Engine) Ready(ctx context.Context) error {
+	var status struct {
+		Version  string
+		Database struct {
+			Ready bool
+			Error string
+		}
+	}
+	if err := e.call(ctx, "status", map[string]any{}, &status); err != nil {
+		return err
+	}
+	if status.Database.Ready {
+		return nil
+	}
+	program, _ := os.Executable()
+	return fmt.Errorf("imsg %s can't read the Messages database (%s). Grant Full Disk Access to %s "+
+		"(or to the terminal app running it) in System Settings → Privacy & Security → Full Disk Access, then restart it",
+		status.Version, status.Database.Error, program)
+}
