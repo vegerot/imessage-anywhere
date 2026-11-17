@@ -136,7 +136,7 @@ A Proxy on the Host Mac serves one web page to any Client on my tailnet. In it I
 - **Identity.** A Conversation is addressed by imsg's chat ID everywhere, including sends (verified in P0).
 - **Access.** The listener binds only to the WireGuard tunnel address and loopback, and rejects any source outside `100.64.0.0/10` and loopback before routing.
 - **Offline behaviour.** Belongs to the page: the browser's built-in `EventSource` reconnect drives the offline/online state, with no custom retry loop.
-- **Read state.** Viewing a Conversation in the page doesn't mark it read on the Host Mac (that needs imsg's SIP-off path).
+- **Read state.** Viewing a Conversation in the page doesn't mark it read on the Host Mac (that needs imsg's SIP-off path). The unread mark follows the newest Message only: a Conversation is unread when its newest Message is received, the Host Mac's database says it's unread, and this browser hasn't opened the Conversation since (remembered in `localStorage`, per browser). imsg's `unread_count` isn't used: it counts old unread rows even below Messages I sent (2026-11-16).
 
 ### Testing Decisions
 
@@ -246,3 +246,14 @@ Contact names come from imsg once its child runs with `SSH_CONNECTION` set (expe
 **Acceptance criteria:**
 - A daily `progress.md` note for seven days, each naming any fallback to the Mac or iPhone and why, and any time the WireGuard tunnel was down.
 - Each problem found becomes a new slice in this section.
+
+## Backlog after v1.0 (from Max's `feedback.md`, 2026-11-16)
+
+In Max's priority order. Each becomes a numbered slice when started.
+
+- ✅ Must fix: Conversations I've replied in showed as unread (done 2026-11-16, with "unread marks don't go away").
+- Great to have: a service worker for installability and notifications (needs HTTPS: a secure context); profile photos; listening to voice messages.
+- Nice to have: read receipts.
+- Nits: loading skeletons on the loading screen; `install-launch-agent.sh` symlinks the executable; boolean names start with `is`/`has`/`should` (e.g. `isFromMe`; new fields already do); how to grant the executable the Contacts permission.
+- Bonus: a stats page (including `imsg stats`); sync 2FA codes automatically with Max's Shortcut.
+- From the 2026-11-16 outage: auto-start the WireGuard tunnel, or at least log "WireGuard tunnel not up; retrying" instead of the raw bind error.

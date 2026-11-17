@@ -245,7 +245,7 @@ func TestListsConversationsNewestFirstWithDisplayNames(t *testing.T) {
 	if len(got) != 100 {
 		t.Fatalf("got %d Conversations, want 100", len(got))
 	}
-	want := Conversation{ID: 242, Name: "Synthetic Name 0", Service: "iMessage", Unread: 1, LastMessageAt: "2026-11-12T08:27:59.322Z"}
+	want := Conversation{ID: 242, Name: "Synthetic Name 0", Service: "iMessage", LastMessageAt: "2026-11-12T08:27:59.322Z"}
 	if got[0] != want {
 		t.Errorf("first Conversation = %+v, want %+v", got[0], want)
 	}
@@ -363,6 +363,10 @@ func TestConversationMessagesAreOldestFirstAndDefaultToTheLast100(t *testing.T) 
 	want := Message{ID: 183576, GUID: "00000000-0000-0000-0000-000000000005", ConversationID: 242, FromMe: true, Sender: "person0@example.com", Text: "🧪 imessage-proxy test (P0 rpc)", CreatedAt: "2026-11-12T08:27:59.322Z"}
 	if fmt.Sprintf("%+v", last) != fmt.Sprintf("%+v", want) {
 		t.Errorf("newest Message = %+v\nwant %+v", last, want)
+	}
+	// Row 183577 is a received Message the database marks unread; my own are never unread.
+	if !messageByID(t, got, 183577).IsUnread || last.IsUnread {
+		t.Errorf("isUnread: 183577 = %v, want true; my own 183576 = %v, want false", messageByID(t, got, 183577).IsUnread, last.IsUnread)
 	}
 	reqs := p.imsgRequests(t, "messages.history")
 	if len(reqs) != 2 || reqs[0]["chat_id"] != 242.0 || reqs[0]["limit"] != 100.0 || reqs[1]["limit"] != 1.0 {

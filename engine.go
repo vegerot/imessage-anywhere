@@ -263,7 +263,6 @@ type Conversation struct {
 	Name          string `json:"name"`
 	Service       string `json:"service"`
 	IsGroup       bool   `json:"isGroup"`
-	Unread        int    `json:"unread"`
 	LastMessageAt string `json:"lastMessageAt"`
 }
 
@@ -275,7 +274,6 @@ type imsgChat struct {
 	Participants  []string `json:"participants"`
 	Service       string   `json:"service"`
 	IsGroup       bool     `json:"is_group"`
-	UnreadCount   int      `json:"unread_count"`
 	LastMessageAt string   `json:"last_message_at"`
 }
 
@@ -292,7 +290,6 @@ func (e *Engine) Conversations(ctx context.Context, limit int) ([]Conversation, 
 			Name:          c.displayName(),
 			Service:       c.Service,
 			IsGroup:       c.IsGroup,
-			Unread:        c.UnreadCount,
 			LastMessageAt: c.LastMessageAt,
 		})
 	}
@@ -329,16 +326,18 @@ func formatHandle(handle string) string {
 
 // Message is one item sent or received in a Conversation, as the page sees it.
 type Message struct {
-	ID             int64      `json:"id"`
-	GUID           string     `json:"guid"`
-	ConversationID int64      `json:"conversationId"`
-	FromMe         bool       `json:"fromMe"`
-	Sender         string     `json:"sender"`
-	SenderName     string     `json:"senderName,omitempty"` // Contact name or formatted Handle; empty for my own
-	Text           string     `json:"text"`
-	CreatedAt      string     `json:"createdAt"`
-	Edited         bool       `json:"edited,omitempty"`
-	Reactions      []Reaction `json:"reactions,omitempty"`
+	ID             int64  `json:"id"`
+	GUID           string `json:"guid"`
+	ConversationID int64  `json:"conversationId"`
+	FromMe         bool   `json:"fromMe"`
+	Sender         string `json:"sender"`
+	SenderName     string `json:"senderName,omitempty"` // Contact name or formatted Handle; empty for my own
+	Text           string `json:"text"`
+	CreatedAt      string `json:"createdAt"`
+	Edited         bool   `json:"edited,omitempty"`
+	// IsUnread: received and not yet read on any of my Apple devices, per the Host Mac's database.
+	IsUnread  bool       `json:"isUnread,omitempty"`
+	Reactions []Reaction `json:"reactions,omitempty"`
 	// Placeholder names what the page can't show yet (attachments, polls, app messages,
 	// unsent Messages), so nothing vanishes silently.
 	Placeholder string       `json:"placeholder,omitempty"`
@@ -375,6 +374,7 @@ type imsgMessage struct {
 	GUID            string `json:"guid"`
 	ChatID          int64  `json:"chat_id"`
 	IsFromMe        bool   `json:"is_from_me"`
+	IsRead          *bool  `json:"is_read"` // received Messages only
 	Sender          string `json:"sender"`
 	SenderName      string `json:"sender_name"`
 	Text            string `json:"text"`
@@ -424,6 +424,7 @@ func (m imsgMessage) toMessage() Message {
 	}
 	if !m.IsFromMe {
 		msg.SenderName = nameOr(m.SenderName, m.Sender)
+		msg.IsUnread = m.IsRead != nil && !*m.IsRead
 	}
 	if !m.isLinkPreview() {
 		for _, a := range m.Attachments {

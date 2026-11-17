@@ -8,7 +8,6 @@ interface Conversation {
 	name: string;
 	service: string; // "iMessage", "SMS", or "RCS"
 	isGroup: boolean;
-	unread: number;
 	lastMessageAt: string;
 }
 
@@ -31,6 +30,7 @@ interface Message {
 	guid: string;
 	conversationId: number;
 	fromMe: boolean;
+	isUnread?: boolean; // received, and unread on all my Apple devices as far as the Host Mac knows
 	sender: string;
 	senderName?: string;
 	text: string;
@@ -136,7 +136,6 @@ function renderRow(conversation: Conversation): HTMLLIElement {
 	fillAvatar(find(row, ".avatar", HTMLElement), conversation.name);
 	find(row, ".name", HTMLElement).textContent = conversation.name;
 	showWhen(row, conversation.lastMessageAt);
-	row.toggleAttribute("data-unread", conversation.unread > 0);
 	return row;
 }
 
@@ -144,6 +143,26 @@ function showWhen(row: HTMLLIElement, at: string): void {
 	const when = find(row, ".when", HTMLTimeElement);
 	when.dateTime = at;
 	when.textContent = formatWhen(new Date(at));
+}
+
+// A Conversation is unread when its newest Message is one I received, the Host Mac's
+// database says it's unread, and I haven't opened the Conversation in this browser since.
+// Not imsg's unread count: that counts every unread row, and the Host Mac's database keeps
+// old rows unread even after I've replied (74 of 100 Conversations, measured 2026-11-16).
+// The page can't mark a Message read on the Host Mac (that needs SIP off), so what I've
+// opened here is remembered per browser: Conversation ID → newest Message row ID seen.
+const readUpTo = fromJSON<Record<string, number>>(localStorage.getItem("readUpTo") ?? "{}");
+
+function markRead(conversationID: number, newest: Message | undefined): void {
+	rows.get(conversationID)?.removeAttribute("data-unread");
+	if (!newest || newest.id <= (readUpTo[conversationID] ?? 0)) return;
+	readUpTo[conversationID] = newest.id;
+	localStorage.setItem("readUpTo", JSON.stringify(readUpTo));
+}
+
+function showUnread(row: HTMLLIElement, newest: Message): void {
+	const isUnread = newest.isUnread === true && newest.id > (readUpTo[newest.conversationId] ?? 0);
+	row.toggleAttribute("data-unread", isUnread && openID !== newest.conversationId);
 }
 
 const preview = (row: HTMLLIElement) => find(row, ".preview", HTMLElement);
@@ -196,8 +215,10 @@ async function fillOnce(): Promise<void> {
 			const row = rows.get(id);
 			if (!row || preview(row).textContent) continue; // gone, or filled live
 			const [last] = await getJSON<Message[]>(`/api/conversations/${id}/messages?limit=1`).catch(() => []);
-			if (last) noteSeen(last);
-			preview(row).textContent = last ? previewText(last) : "";
+			if (!last) continue;
+			noteSeen(last);
+			preview(row).textContent = previewText(last);
+			showUnread(row, last);
 		}
 	};
 	// Two workers leave two of imsg's four read lanes free, so opening a Conversation never waits behind previews.
@@ -433,6 +454,7 @@ async function loadConversation(id: number | null): Promise<void> {
 	const messages = await loading;
 	if (openID !== conversation.id) return; // the user opened another Conversation meanwhile
 	messages.forEach(noteSeen);
+	markRead(conversation.id, messages.at(-1));
 	openMessages = messages;
 	showMessages(conversation, { scrollToEnd: true });
 }
@@ -521,7 +543,10 @@ async function applyLiveMessage(message: Message, isNew: boolean): Promise<void>
 		showWhen(row, message.createdAt);
 		preview(row).textContent = previewText(message);
 		list.prepend(row);
-		if (!message.fromMe && openID !== id) row.toggleAttribute("data-unread", true);
+		// A Message that just arrived is unread until I open its Conversation; one I sent
+		// (from any device) means I've read what came before it.
+		if (openID === id) markRead(id, message);
+		else row.toggleAttribute("data-unread", !message.fromMe);
 	}
 	if (openID !== id) return;
 	if (message.reactsTo) {

@@ -215,3 +215,15 @@ Next:
 
 Next:
 - Ticket 08 (shakedown week), with Max.
+
+## 2026-11-16 — 🔵 Unread marks follow the newest Message
+
+- 📋 Resumed from Max's `feedback.md` (now the "Backlog after v1.0" section of `plan.md`). Live state first: the launchd agent was serving (200); the log's only new failures were the 2026-11-16 12:33–12:39 bind errors while the WireGuard tunnel was down (see `proxy-down-tunnel-missing.md`). Max's commit `93d41a981453` moved `go generate` from `npx` to `bunx` and Go to 1.27.4. Ticket 08's daily notes were never started.
+- 🔬 Must-fix "Conversations where I've sent a Message show as unread", measured before changing anything: 74 of 100 Conversations had imsg `unread_count > 0`; in 19 of them I had sent a Message within the last 100, and in 4 my Message was the newest. Cause: `unread_count` counts every received row with `is_read = 0`, and the Host Mac's database keeps old rows unread below Messages I sent.
+- 🔵 New rule: a Conversation is unread when its newest Message is received and unread in the database (`isUnread`, from imsg's `is_read`), and this browser hasn't opened the Conversation since. The Proxy's Conversation JSON drops `unread`; Messages gain `isUnread`. The page sets the mark when a row's preview loads (it already fetches the newest Message), clears it when I open the Conversation or a Message of mine arrives live, and remembers the newest row ID seen per Conversation in `localStorage` (the page can't mark read on the Host Mac with SIP on). This also covers the nice-to-have "unread marks don't go away".
+- ✅ Checked: 28 seam tests pass (new assertion on recorded row 183577). Redeployed through the launchd agent. Live: 62 unread, of which 55 are Conversations I never sent in and 7 have received Messages newer than my last one. In the browser: 62 marks; opening one cleared it; 61 after a reload; no console errors.
+- ❓ Not verified: whether those 62 match the iPhone. If Messages read on the iPhone stay `is_read = 0` on this Mac, marks will still be too many; Max to compare a few.
+
+Next:
+- Max picks from the backlog; my suggestion is the cheap nits (skeletons, symlink, `is…` names), then profile photos and voice messages. The service worker needs HTTPS first.
+
