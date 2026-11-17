@@ -287,3 +287,7 @@ Next:
 
 Next:
 - Max: open the new address on `maxs-pc`, install it (address bar → install icon), click "Turn on notifications", and wait for a real Message.
+
+## 2026-11-16 — 📲 Installed on Windows
+
+- ✅ Max installed the page from the new HTTPS address on the Windows PC; it works. No notification seen yet (no real Message from a known sender had arrived while the window was in the background).
