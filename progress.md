@@ -291,3 +291,9 @@ Next:
 ## 2026-11-16 — 📲 Installed on Windows
 
 - ✅ Max installed the page from the new HTTPS address on the Windows PC; it works. No notification seen yet (no real Message from a known sender had arrived while the window was in the background).
+
+## 2026-11-16 — 👥 Unnamed groups show names, not numbers
+
+- 🐛 Max saw a group whose title was two phone numbers, though both people are in his contacts. Cause: imsg's `chats.list` gives a group's participants as Handles only, and the Proxy formatted those.
+- 🔧 The Proxy now names participants from the one-to-one Conversations in the same list, which carry Handle and Contact name together. Measured: 13 of 14 participants of unnamed groups in the newest 100 Conversations get a name; a participant I have no recent one-to-one Conversation with stays a number. imsg has no method that maps a Handle to a name.
+- ✅ Checked: the recorded transcript's unnamed group now reads "Synthetic Name 17, Synthetic Name 2" (seam test updated); live, the group Max reported has no number in its title. 30 seam tests pass.

@@ -257,10 +257,10 @@ func TestListsConversationsNewestFirstWithDisplayNames(t *testing.T) {
 		id   int64
 		name string
 	}{
-		{21, "Synthetic Name 5"},                       // named group
-		{2093, "+1 (555) 010-0018, +1 (555) 010-0002"}, // unnamed group: its participants, formatted like Messages.app
-		{1622, "+1 (555) 010-0003"},                    // unnamed SMS Conversation: its number, formatted
-		{2267, "Synthetic Name 9"},                     // RCS Conversation with a display name
+		{21, "Synthetic Name 5"},                      // named group
+		{2093, "Synthetic Name 17, Synthetic Name 2"}, // unnamed group: its participants, named from my one-to-one Conversations
+		{1622, "+1 (555) 010-0003"},                   // unnamed SMS Conversation: its number, formatted
+		{2267, "Synthetic Name 9"},                    // RCS Conversation with a display name
 	} {
 		if byID[tc.id].Name != tc.name {
 			t.Errorf("Conversation %d name = %q, want %q", tc.id, byID[tc.id].Name, tc.name)

@@ -283,11 +283,20 @@ func (e *Engine) Conversations(ctx context.Context, limit int) ([]Conversation, 
 	if err := e.call(ctx, "chats.list", map[string]any{"limit": limit}, &result); err != nil {
 		return nil, err
 	}
+	// imsg names a group's participants by Handle only. My one-to-one Conversations in the
+	// same list carry Handle and Contact name together, so they name most participants
+	// (13 of 14 on 2026-11-16); the rest stay numbers.
+	names := map[string]string{}
+	for _, c := range result.Chats {
+		if !c.IsGroup && c.ContactName != "" {
+			names[c.Identifier] = c.ContactName
+		}
+	}
 	conversations := make([]Conversation, 0, len(result.Chats))
 	for _, c := range result.Chats {
 		conversations = append(conversations, Conversation{
 			ID:            c.ID,
-			Name:          c.displayName(),
+			Name:          c.displayName(names),
 			Service:       c.Service,
 			IsGroup:       c.IsGroup,
 			LastMessageAt: c.LastMessageAt,
@@ -298,18 +307,18 @@ func (e *Engine) Conversations(ctx context.Context, limit int) ([]Conversation, 
 
 // displayName follows Messages.app: the group's or Conversation's own name, else the
 // contact's name, else (for a group) its participants, else the raw handle.
-func (c imsgChat) displayName() string {
+func (c imsgChat) displayName(names map[string]string) string {
 	switch {
 	case c.DisplayName != "":
 		return c.DisplayName
 	case c.ContactName != "":
 		return c.ContactName
 	case c.IsGroup && len(c.Participants) > 0:
-		names := make([]string, len(c.Participants))
+		participants := make([]string, len(c.Participants))
 		for i, p := range c.Participants {
-			names[i] = formatHandle(p)
+			participants[i] = nameOr(names[p], p)
 		}
-		return strings.Join(names, ", ")
+		return strings.Join(participants, ", ")
 	default:
 		return formatHandle(c.Identifier)
 	}
