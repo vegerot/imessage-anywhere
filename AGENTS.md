@@ -12,7 +12,7 @@ This folder is its own project root inside the `ai-conversations` archive. Paths
 
 ## Building
 
-- After editing `app.ts`, run `go generate ./...` (type-checks it and rewrites `app.js`; commit both). `scripts/install-launch-agent.sh` runs it before building.
+- `app.js` is generated and not committed: run `go generate ./...` once in a fresh checkout and after editing `app.ts` (it type-checks `app.ts` and writes `app.js`; `go build` and `go test` need the file). `scripts/install-launch-agent.sh` runs it before building.
 - `go test ./...` runs the seam tests; `scripts/install-launch-agent.sh` builds, signs, and restarts the launchd agent that serves the page.
 
 ## Commits

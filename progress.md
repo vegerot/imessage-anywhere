@@ -234,3 +234,8 @@ Next:
 - 🧮 Why imsg's `unread_count` said 74: it also counts unread rows that aren't Messages (`item_type` 2–6: 364 rows in 12 known-sender Conversations, 321 of them `item_type = 4`). Counting real Messages only (`item_type = 0`): 63 Conversations, and in 62 of them the newest Message is unread. The page showed 62, so the newest-Message rule matches the database.
 - 📂 Of those 63, 54 are in Conversations Messages.app files under unknown senders (`chat.is_filtered` 1 or 2); 9 are known senders.
 - ✍️ Writing is the gap: with SIP on, nothing public marks a row read, so "opened in this browser" lives in `localStorage`. Untested alternatives: have Messages.app open the Conversation, or write `is_read` in the database directly (wouldn't reach the iPhone; the Messages service owns that file).
+
+## 2026-11-16 — 📦 `app.js` is no longer committed
+
+- 📦 Max asked why `app.js` was committed. It was so `go build` needed no JavaScript tools, but only the Host Mac builds the Proxy and `install-launch-agent.sh` regenerates it, so the committed copy only duplicated every page diff. Now ignored and untracked; a fresh checkout runs `go generate ./...` once before `go build` or `go test` (`AGENTS.md`, `plan.md`).
+- 🙅 Max declined the "Messages.app opens the Conversation" experiment for shared read state: too complicated for now. "Opened in this browser" stays in `localStorage`.

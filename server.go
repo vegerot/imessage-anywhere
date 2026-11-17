@@ -91,7 +91,7 @@ func (s *server) listConversations(w http.ResponseWriter, r *http.Request) {
 }
 
 // The page's code is TypeScript (app.ts). This type-checks it and compiles it to app.js,
-// which is committed so that `go build` needs no JavaScript tools.
+// which is generated, not committed: run `go generate ./...` before `go build` in a fresh checkout.
 //go:generate bunx --package=typescript@7.0.2 tsc --project .
 
 //go:embed index.html
