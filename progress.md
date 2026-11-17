@@ -264,3 +264,14 @@ Next:
 - 🔗 Max granted Full Disk Access to the repo's `imessage-anywhere` file. `install-launch-agent.sh` now builds and signs there and links `~/.local/bin/imessage-anywhere` to it. Checked: the agent started through the symlink and served 100 Conversations.
 - 🔬 Experiment, replacing the earlier inference: a plain `go build` (forced to differ with `-ldflags=-s`) is ad-hoc signed (`Identifier=a.out`); after restarting the agent, imsg couldn't read the Messages database. Re-running the install script (signed build) fixed it. So the signature matters as well as the path: always build through the script. A `go build` with unchanged sources doesn't rewrite the file, so it keeps its signature.
 - 🧹 The old grant for `~/.local/bin/imessage-anywhere` is now unused; Max can remove it in System Settings.
+
+## 2026-11-16 — 🔔 Notifications while the page is open
+
+- 🙋 Max's decisions: notifications only while the page is open somewhere, and none on the phone. That removed Web Push, the service worker, and an always-on watch in the Proxy from the plan.
+- 🔔 The page shows a notification itself (`new Notification`) for a live Message when the page doesn't have focus, the Message isn't mine, and its sender is in my contacts. One notification per Conversation (a newer Message replaces it); clicking it focuses the page and opens the Conversation; opening the Conversation closes it. A "Turn on notifications" button under the list asks for permission (browsers need a click) and disappears once answered. Off on Android (Chrome there has no page notifications) and on plain HTTP (browsers need HTTPS or loopback).
+- 🏷️ New JSON field `isUnknownSender`: a received Message whose sender imsg has no contact name for. Measured on the newest 5 Messages of 40 Conversations: 86 flagged, all 86 names are raw numbers; 49 not flagged, none is.
+- ✅ Checked in Chrome on loopback with a stand-in live stream and a stand-in `Notification`: the button shows, then hides after granting; of four live Messages (known sender, unknown sender, mine, group) exactly the known one and the group one notify, with the Conversation name as title, "Pat: …" in the group, and the Conversation ID as tag; the click opens the Conversation and closes the notification. 29 seam tests pass. Not checked: a real notification on screen from a real Message, and whether Chrome's Memory Saver discards an idle tab (that would stop notifications).
+- 🔬 Before deciding: the Host Mac reaches the push services (`fcm.googleapis.com`, Mozilla's, Apple's), and the Pi's `work-macbook` node may request an HTTPS certificate (`CertDomains` lists its `ts.net` name). Push is not needed now; the certificate is the next step.
+
+Next:
+- HTTPS with the node's certificate, then a web app manifest so the page installs as its own window.

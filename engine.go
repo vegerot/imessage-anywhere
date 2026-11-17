@@ -326,15 +326,16 @@ func formatHandle(handle string) string {
 
 // Message is one item sent or received in a Conversation, as the page sees it.
 type Message struct {
-	ID             int64  `json:"id"`
-	GUID           string `json:"guid"`
-	ConversationID int64  `json:"conversationId"`
-	IsFromMe       bool   `json:"isFromMe"`
-	Sender         string `json:"sender"`
-	SenderName     string `json:"senderName,omitempty"` // Contact name or formatted Handle; empty for my own
-	Text           string `json:"text"`
-	CreatedAt      string `json:"createdAt"`
-	IsEdited       bool   `json:"isEdited,omitempty"`
+	ID              int64  `json:"id"`
+	GUID            string `json:"guid"`
+	ConversationID  int64  `json:"conversationId"`
+	IsFromMe        bool   `json:"isFromMe"`
+	Sender          string `json:"sender"`
+	SenderName      string `json:"senderName,omitempty"`      // Contact name or formatted Handle; empty for my own
+	IsUnknownSender bool   `json:"isUnknownSender,omitempty"` // received from a Handle that isn't in my contacts
+	Text            string `json:"text"`
+	CreatedAt       string `json:"createdAt"`
+	IsEdited        bool   `json:"isEdited,omitempty"`
 	// IsUnread: received and not yet read on any of my Apple devices, per the Host Mac's database.
 	IsUnread  bool       `json:"isUnread,omitempty"`
 	Reactions []Reaction `json:"reactions,omitempty"`
@@ -424,6 +425,7 @@ func (m imsgMessage) toMessage() Message {
 	}
 	if !m.IsFromMe {
 		msg.SenderName = nameOr(m.SenderName, m.Sender)
+		msg.IsUnknownSender = m.SenderName == ""
 		msg.IsUnread = m.IsRead != nil && !*m.IsRead
 	}
 	if !m.isLinkPreview() {

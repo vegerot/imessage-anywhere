@@ -33,6 +33,7 @@ interface Message {
 	isUnread?: boolean; // received, and unread on all my Apple devices as far as the Host Mac knows
 	sender: string;
 	senderName?: string;
+	isUnknownSender?: boolean; // not in my contacts: no notification, like Messages.app's unknown-senders filter
 	text: string;
 	createdAt: string;
 	isEdited?: boolean;
@@ -83,6 +84,7 @@ const connection = find(document, "#connection", HTMLParagraphElement);
 const rowTemplate = find(document, "#conversation-row", HTMLTemplateElement);
 const viewTemplate = find(document, "#conversation-view", HTMLTemplateElement);
 const personGlyph = find(document, "#person-glyph", HTMLTemplateElement);
+const notifyButton = find(document, "#notify", HTMLButtonElement);
 
 // ── Dates, Messages.app style ─────────────────────────────────────────────────────────
 
@@ -155,6 +157,7 @@ const readUpTo = fromJSON<Record<string, number>>(localStorage.getItem("readUpTo
 
 function markRead(conversationID: number, newest: Message | undefined): void {
 	rows.get(conversationID)?.removeAttribute("data-unread");
+	notifications.get(conversationID)?.close();
 	if (!newest || newest.id <= (readUpTo[conversationID] ?? 0)) return;
 	readUpTo[conversationID] = newest.id;
 	localStorage.setItem("readUpTo", JSON.stringify(readUpTo));
@@ -163,6 +166,45 @@ function markRead(conversationID: number, newest: Message | undefined): void {
 function showUnread(row: HTMLLIElement, newest: Message): void {
 	const isUnread = newest.isUnread === true && newest.id > (readUpTo[newest.conversationId] ?? 0);
 	row.toggleAttribute("data-unread", isUnread && openID !== newest.conversationId);
+}
+
+// ── Notifications ─────────────────────────────────────────────────────────────────────
+
+// Shown by the page itself, so only while it is open somewhere (a tab or an installed
+// window); no service worker and no push service. Browsers offer this on HTTPS and
+// loopback only, and Chrome on Android not at all (its constructor throws), which is fine:
+// the phone gets its notifications from the iPhone.
+const canNotify = "Notification" in window && isSecureContext && !/Android/.test(navigator.userAgent);
+const notifications = new Map<number, Notification>(); // by Conversation ID: one each, the newest Message
+
+// Like Messages.app: nothing while I'm looking at the page, and nothing from unknown senders.
+function notify(conversation: Conversation, message: Message): void {
+	if (!canNotify || Notification.permission !== "granted") return;
+	if (message.isFromMe || message.isUnknownSender || document.hasFocus()) return;
+	const text = previewText(message);
+	const notification = new Notification(conversation.name, {
+		body: conversation.isGroup && !message.reactsTo ? `${message.senderName}: ${text}` : text,
+		tag: String(conversation.id), // a newer Message replaces the Conversation's older notification
+	});
+	notifications.set(conversation.id, notification);
+	notification.addEventListener("click", () => {
+		focus();
+		const path = `/conversations/${conversation.id}`;
+		if (location.pathname === path) return;
+		history.pushState(null, "", path);
+		route({ shouldAnimate: false });
+	});
+}
+
+// Browsers only show the permission prompt in answer to a click, so the list offers a
+// button until I've answered it.
+function offerNotifications(): void {
+	if (!canNotify || Notification.permission !== "default") return;
+	notifyButton.hidden = false;
+	notifyButton.addEventListener("click", async () => {
+		await Notification.requestPermission();
+		notifyButton.hidden = Notification.permission !== "default";
+	});
 }
 
 const preview = (row: HTMLLIElement) => find(row, ".preview", HTMLElement);
@@ -573,6 +615,7 @@ async function applyLiveMessage(message: Message, isNew: boolean): Promise<void>
 		// (from any device) means I've read what came before it.
 		if (openID === id) markRead(id, message);
 		else row.toggleAttribute("data-unread", !message.isFromMe);
+		notify(conversation, message);
 	}
 	if (openID !== id) return;
 	if (message.reactsTo) {
@@ -729,6 +772,7 @@ try {
 	addEventListener("popstate", onPopState);
 	route({ shouldAnimate: false });
 	fillPreviews();
+	offerNotifications();
 } catch (error: unknown) {
 	list.replaceChildren();
 	status.textContent = `Couldn’t load Conversations: ${error instanceof Error ? error.message : error}. Reload to try again.`;

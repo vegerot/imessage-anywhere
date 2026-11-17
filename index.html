@@ -207,6 +207,28 @@
 		}
 	}
 
+	#notify {
+		position: sticky;
+		inset-block-end: 0.5rem;
+		display: block;
+		margin: 0.5rem auto;
+		padding: 0.375rem 0.875rem;
+
+		font: inherit;
+		font-size: 0.8125rem;
+		color: white;
+
+		background: var(--accent);
+		border: none;
+		border-radius: 1rem;
+
+		cursor: pointer;
+
+		&[hidden] {
+			display: none;
+		}
+	}
+
 	#connection {
 		position: fixed;
 		inset-block-start: 0.75rem;
@@ -600,6 +622,7 @@
 	<nav aria-label="Conversations">
 		<h1>Messages</h1>
 		<ul id="conversations" aria-busy="true"></ul>
+		<button id="notify" hidden>Turn on notifications</button>
 	</nav>
 	<main>
 		<p id="status">Loading Conversations…</p>
