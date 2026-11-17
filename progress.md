@@ -227,3 +227,10 @@ Next:
 Next:
 - Max picks from the backlog; my suggestion is the cheap nits (skeletons, symlink, `is…` names), then profile photos and voice messages. The service worker needs HTTPS first.
 
+
+## 2026-11-16 — 🔬 Where Messages.app keeps read state (database check, with Full Disk Access)
+
+- 🗄️ Read state is one flag per received row: `message.is_read` (plus `date_read`). `chat.last_read_message_timestamp` gives the same answer (63 unread Conversations of the newest 100 either way), and Messages.app wasn't running, so the flags are kept current by the system's Messages service, not the app. The page's `isUnread` is this flag, read through imsg.
+- 🧮 Why imsg's `unread_count` said 74: it also counts unread rows that aren't Messages (`item_type` 2–6: 364 rows in 12 known-sender Conversations, 321 of them `item_type = 4`). Counting real Messages only (`item_type = 0`): 63 Conversations, and in 62 of them the newest Message is unread. The page showed 62, so the newest-Message rule matches the database.
+- 📂 Of those 63, 54 are in Conversations Messages.app files under unknown senders (`chat.is_filtered` 1 or 2); 9 are known senders.
+- ✍️ Writing is the gap: with SIP on, nothing public marks a row read, so "opened in this browser" lives in `localStorage`. Untested alternatives: have Messages.app open the Conversation, or write `is_read` in the database directly (wouldn't reach the iPhone; the Messages service owns that file).
