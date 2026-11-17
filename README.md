@@ -13,8 +13,8 @@ A Go Proxy on the work Mac that serves Messages to tailnet browsers. This folder
 
 ## Takeaways
 
-- 🔌 The Proxy depends on the hand-started WireGuard tunnel. The design chose "exit and let launchd retry" over "skip the missing address", so a down tunnel makes loopback fail too. When the page is unreachable, check `ifconfig | rg 172.16.1.2` and the log in `~/Library/Logs/imessage-anywhere.log` first.
-- 🧭 Conversation 1 built the retry behavior; conversation 2 was the first time it showed up in real use. Tunnel auto-start is still out of scope.
+- 🔌 The Proxy depends on the WireGuard tunnel, which a root launchd job starts and keeps up since 2026-11-16 (before that, by hand). The design chose "exit and let launchd retry" over "skip the missing address", so a down tunnel makes loopback fail too. When the page is unreachable, check `ifconfig | rg 172.16.1.2` and the log in `~/Library/Logs/imessage-anywhere.log` first.
+- 🧭 Conversation 1 built the retry behavior; conversation 2 was the first time it showed up in real use. Tunnel auto-start was added on 2026-11-16 (`progress.md`).
 
 ## 🗃️ Live table
 

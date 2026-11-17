@@ -249,3 +249,12 @@ Next:
 
 Next:
 - Max decides on tunnel auto-start (plan explained in chat) and on patching imsg (my recommendation: not now).
+
+## 2026-11-16 — 🔌 The WireGuard tunnel starts by itself; 🔗 symlinked executable tried and reverted
+
+- 🔌 The existing root launchd job `com.vegerot.wg-home-endpoint` (every 30 s; source in `../vpn/wg-home-endpoint/`) now runs `wg-quick up home` when the tunnel is down. Off switch: `sudo touch /usr/local/etc/wg-home.off`.
+- 🐛 First live test failed: the job logged "started the home tunnel", but 30 s later there was no interface. `wireguard-go` was gone and `/var/run/wireguard/home.name` was left behind. Cause (inferred from the fix working): launchd kills the processes a job leaves behind when its script exits. Fix: `AbandonProcessGroup` in the plist, and the script treats a name file whose interface doesn't answer as "tunnel down".
+- ✅ Checked live: with the off switch set, the tunnel stayed down for 45 s after `wg-quick down home`; with it removed, the job started the tunnel within 30 s (handshake 2 s later, `wireguard-go` still running after the job's next run, tailnet ping 7 ms). Not checked: a reboot, and starting with no network.
+- 🔬 Seen on the way: the already-running Proxy kept answering on loopback while the tunnel was down, and answered on `172.16.1.2` again once the tunnel was back, without a restart. A missing tunnel only stops the Proxy at startup.
+- 🔗 Max asked for the install script to symlink the executable instead of placing a separate one in `~/.local/bin`. Experiment: built and signed the Proxy in the repo and made `~/.local/bin/imessage-anywhere` a symlink to it. The agent started through the symlink but imsg couldn't read the Messages database. The Full Disk Access record is keyed by the path `~/.local/bin/imessage-anywhere` plus the signature, and macOS matched the real file's path, which has no grant. Reverted; the Proxy is back (100 Conversations). To make a symlink work, Max would grant Full Disk Access to the repo's `imessage-anywhere` file. Even then a plain `go build` is ad-hoc signed, so it would not match the grant until signed (inferred from the grant's signature requirement, not tested).
+- 🙋 Max's answers: no contact names are missing, the Contacts permission was meant as the better default; there is no 2FA Shortcut, only an idea. Both noted in `plan.md`'s backlog.
