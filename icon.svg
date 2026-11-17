@@ -1,0 +1,16 @@
+<!-- Hex colours, not oklch(): rsvg-convert, which draws the PNGs, does not read oklch(). -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+	<defs>
+		<linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+			<stop offset="0" stop-color="#58b4ff"/>
+			<stop offset="1" stop-color="#1672f3"/>
+		</linearGradient>
+	</defs>
+	<rect width="512" height="512" rx="112" fill="url(#sky)"/>
+	<path fill="white" d="M256 124c-88 0-156 56-156 128 0 42 23 79 60 103-3 21-13 39-28 53 30-2 56-12 77-30 15 4 31 6 47 6 88 0 156-58 156-132s-68-128-156-128z"/>
+	<g fill="#2b87f6">
+		<circle cx="190" cy="254" r="19"/>
+		<circle cx="256" cy="254" r="19"/>
+		<circle cx="322" cy="254" r="19"/>
+	</g>
+</svg>

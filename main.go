@@ -7,8 +7,10 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -17,6 +19,9 @@ func main() {
 	imsgPath := flag.String("imsg", "imsg", "path to the imsg executable")
 	listen := flag.String("listen", "172.16.1.2:7171,127.0.0.1:7171",
 		"comma-separated addresses to listen on: the WireGuard tunnel address and loopback")
+	configDir, _ := os.UserConfigDir() // ~/Library/Application Support
+	certificate := flag.String("certificate", filepath.Join(configDir, "imessage-anywhere", "certificate.pem"),
+		"the HTTPS certificate chain and its private key in one PEM file (scripts/fetch-certificate.sh)")
 	flag.Parse()
 
 	cmd := exec.Command(*imsgPath, "rpc")
@@ -43,8 +48,18 @@ func main() {
 		if err != nil {
 			log.Fatalf("listening on %s: %v", addr, err)
 		}
-		log.Printf("serving on http://%s", addr)
-		go func() { log.Fatal(http.Serve(ln, handler)) }()
+		// Browsers only allow notifications and installing the page over HTTPS or on
+		// loopback. So loopback stays plain HTTP (for checks on the Host Mac), and the
+		// tunnel address serves HTTPS with the certificate for the Proxy's tailnet name.
+		host, _, _ := net.SplitHostPort(addr)
+		if netip.MustParseAddr(host).IsLoopback() {
+			log.Printf("serving on http://%s", addr)
+			go func() { log.Fatal(http.Serve(ln, handler)) }()
+			continue
+		}
+		log.Printf("serving on https://%s", addr)
+		// A missing certificate exits here; launchd retries until fetch-certificate.sh has run.
+		go func() { log.Fatal((&http.Server{Handler: handler}).ServeTLS(ln, *certificate, *certificate)) }()
 	}
 
 	<-engine.Done()

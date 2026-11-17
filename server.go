@@ -5,7 +5,7 @@ package main
 
 import (
 	"cmp"
-	_ "embed"
+	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -36,6 +36,15 @@ func NewServer(engine *Engine) http.Handler {
 	mux.HandleFunc("GET /{$}", servePage)
 	mux.HandleFunc("GET /conversations/{id}", serveConversationPage)
 	mux.HandleFunc("GET /app.js", serveScript)
+	// The web app manifest and its icons let a browser install the page as its own window.
+	for _, name := range []string{"manifest.webmanifest", "icon.svg", "icon-192.png", "icon-512.png"} {
+		mux.HandleFunc("GET /"+name, func(w http.ResponseWriter, r *http.Request) {
+			if name == "manifest.webmanifest" {
+				w.Header().Set("Content-Type", "application/manifest+json")
+			}
+			http.ServeFileFS(w, r, installFiles, name)
+		})
+	}
 	mux.HandleFunc("GET /api/conversations", s.listConversations)
 	mux.HandleFunc("GET /api/conversations/{id}/messages", s.listMessages)
 	mux.HandleFunc("POST /api/conversations/{id}/messages", s.sendMessage)
@@ -99,6 +108,9 @@ var page []byte
 
 //go:embed app.js
 var script []byte
+
+//go:embed manifest.webmanifest icon.svg icon-192.png icon-512.png
+var installFiles embed.FS
 
 func servePage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

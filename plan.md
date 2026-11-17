@@ -11,7 +11,8 @@ Vocabulary is in [GLOSSARY.md](GLOSSARY.md).
 - 🍎 The Host Mac is the work Mac (`work-macbook`). The Proxy works only while it is online. Clients only need a browser.
 - 🌐 Reach: tailnet only. The Host Mac sits on office Wi-Fi, so its LAN is the corporate network; the Proxy must never listen there. It reaches the tailnet through the Pi stand-in node ([`vpn/work-macbook-stand-in/`](../vpn/work-macbook-stand-in/README.md)) over a WireGuard tunnel that a root launchd job starts and keeps up ([`vpn/wg-home-endpoint/`](../vpn/wg-home-endpoint/wg-home-endpoint), since 2026-11-16; `sudo touch /usr/local/etc/wg-home.off` keeps it down).
 - 🔑 Only my devices may connect. The Proxy listens only on `172.16.1.2` (the WireGuard tunnel) and `127.0.0.1` (loopback, for checks on the Host Mac itself), and accepts only callers from `100.64.0.0/10` or loopback; tailnet membership is the login. No passwords or tokens. Add a login only if a device I don't control ever joins the tailnet.
-- 🔐 Plain HTTP for now: WireGuard and Tailscale already encrypt the whole path. HTTPS waits until notifications or an installable Android web app need a secure context.
+- 🔐 HTTPS on the tunnel address, plain HTTP on loopback (2026-11-16). WireGuard and Tailscale already encrypt the path; HTTPS is there because browsers only allow notifications and installing the page in a secure context (HTTPS or loopback). The address is `https://work-macbook.<tailnet>.ts.net:7171` (port 7171 stays: macOS lets a non-root program bind a port below 1024 only on all addresses, which the Proxy must never do). The certificate is Let's Encrypt's, for the node's `ts.net` name. The Host Mac can't run Tailscale, so the Pi's `work-macbook` node requests it and `scripts/fetch-certificate.sh` copies it over SSH to `~/Library/Application Support/imessage-anywhere/certificate.pem` (chain and key in one file); a launchd agent runs that every Monday and restarts the Proxy when the certificate changed. Rejected: `tailscale serve` on the Pi (the Proxy would see every caller as the Pi, which empties the caller filter). The name is in public Certificate Transparency logs; it resolves only inside the tailnet.
+- 🔔 Notifications come from the open page (2026-11-16, Max): `new Notification` for a live Message when the page has no focus, the Message isn't mine, and the sender is in my contacts. Only while the page is open somewhere, and not on the phone. So no service worker, no Web Push, and the Proxy keeps no state. A web app manifest and icons make the page installable as its own window; Chrome needs no service worker for that (checked: it fires `beforeinstallprompt`).
 - 🔓 SIP stays on, always. Start with public surfaces (reading the Messages database, AppleScript sending). Reverse engineering and private APIs are fair game later, as long as they work with SIP on, for features public surfaces lack (tapbacks, replies, typing, read receipts, edits). Each one is its own experiment after the basics work.
 - 💬 Every Service (iMessage, SMS, RCS) is handled the same way; the UI shows which one.
 - 📱 Clients: desktop browsers on GNU+Linux and Windows, and Chrome on my Android dev phone. Single user.
@@ -154,7 +155,7 @@ A Proxy on the Host Mac serves one web page to any Client on my tailnet. In it I
 - Scrolling back past the last 100 Messages, until ticket 08 shows a need.
 - Tapbacks, threaded replies, typing indicators, read receipts, edit and unsend, stickers, polls: later experiments with private APIs that work with SIP on.
 - Marking Conversations read on the Host Mac.
-- Browser notifications, an installable Android web app, and HTTPS.
+- Notifications while the page is closed (Web Push), and notifications on the phone.
 - Search, Conversation management (delete, mute, pin, rename), and settings.
 - Multiple users, logins, and access from outside my tailnet.
 - Any Host Mac other than `work-macbook`; any Mac with SIP off.
@@ -251,7 +252,7 @@ Contact names come from imsg once its child runs with `SSH_CONNECTION` set (expe
 In Max's priority order. Each becomes a numbered slice when started.
 
 - ✅ Must fix: Conversations I've replied in showed as unread (done 2026-11-16, with "unread marks don't go away").
-- Great to have: a service worker for installability and notifications (needs HTTPS: a secure context); profile photos. ✅ Listening to voice messages (2026-11-16).
+- Great to have: ✅ installability and notifications (2026-11-16; without a service worker, see Decisions); profile photos. ✅ Listening to voice messages (2026-11-16).
 - Nice to have: read receipts.
 - Nits: ✅ loading skeletons (2026-11-16); ✅ boolean names start with `is`/`has`/`should` (2026-11-16; keep doing this for new names); ✅ `install-launch-agent.sh` symlinks the executable (2026-11-16, after Max granted Full Disk Access to the repo's file); the Contacts permission as the proper default instead of reading the Contacts database (no names are missing today; needs the Proxy wrapped in an app bundle so macOS can show the prompt).
 - Bonus: a stats page (including `imsg stats`); 2FA codes: no design yet, only an idea to think about (Max mentioned the Windows ↔ iOS/macOS clipboard-sync Shortcut from another conversation; a "Copy code" button on code Messages is one cheap form).

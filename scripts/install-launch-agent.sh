@@ -8,7 +8,6 @@
 set -eu
 cd "$(dirname "$0")/.."
 label=com.vegerot.imessage-anywhere
-plist="$HOME/Library/LaunchAgents/$label.plist"
 
 binary="$PWD/imessage-anywhere"
 go generate ./... # type-check app.ts and compile it to app.js
@@ -23,7 +22,11 @@ else
 	echo "warning: no Apple Development identity; ad-hoc signed, so each rebuild needs a new Full Disk Access grant" >&2
 fi
 ln -sf "$binary" "$HOME/.local/bin/imessage-anywhere"
-cp "launchd/$label.plist" "$plist"
-launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
-launchctl bootstrap "gui/$(id -u)" "$plist"
+# Two agents: the Proxy, and the weekly fetch of its HTTPS certificate (which also runs
+# now, so a fresh install gets its certificate; the Proxy retries until it is there).
+for agent in "$label" "$label.certificate"; do
+	cp "launchd/$agent.plist" "$HOME/Library/LaunchAgents/"
+	launchctl bootout "gui/$(id -u)/$agent" 2>/dev/null || true
+	launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/$agent.plist"
+done
 echo "started $label; log: ~/Library/Logs/imessage-anywhere.log"

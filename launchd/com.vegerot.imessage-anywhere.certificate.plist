@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  iMessage Anywhere: fetches the Proxy's HTTPS certificate every Monday morning (and at
+  login), so a renewed one arrives well before the old one expires. A Mac that was asleep
+  at that time runs the job when it wakes. Installed by scripts/install-launch-agent.sh.
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.vegerot.imessage-anywhere.certificate</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/bytedance/code/github.com/vegerot/ai-conversations/imessage-anywhere/scripts/fetch-certificate.sh</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Weekday</key>
+		<integer>1</integer>
+		<key>Hour</key>
+		<integer>10</integer>
+		<key>Minute</key>
+		<integer>7</integer>
+	</dict>
+	<key>StandardOutPath</key>
+	<string>/Users/bytedance/Library/Logs/imessage-anywhere-certificate.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/bytedance/Library/Logs/imessage-anywhere-certificate.log</string>
+</dict>
+</plist>

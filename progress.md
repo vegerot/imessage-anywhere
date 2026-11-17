@@ -275,3 +275,15 @@ Next:
 
 Next:
 - HTTPS with the node's certificate, then a web app manifest so the page installs as its own window.
+
+## 2026-11-16 — 🔒 HTTPS with a real certificate; 📲 the page installs as its own window
+
+- 🔒 The Proxy serves HTTPS on `172.16.1.2:7171` and plain HTTP on `127.0.0.1:7171`. New address: `https://work-macbook.<tailnet>.ts.net:7171`. The old `http://work-macbook:7171` now answers 400.
+- 📜 The certificate (Let's Encrypt, expires 2027-02-15) comes from the Pi's `work-macbook` node through `scripts/fetch-certificate.sh`; a new launchd agent `com.vegerot.imessage-anywhere.certificate` runs it at login and every Monday, and restarts the Proxy when the file changed. `install-launch-agent.sh` installs both agents.
+- 🐛 The first request failed: "lookup acme-v02.api.letsencrypt.org on [fd7a:115c:a1e0::53]:53: server misbehaving". Observed: the node's tailscaled no longer had `/etc/netns/wm/resolv.conf` mounted over `/etc/resolv.conf` (its mount list had no entry; the Pi's own tailscaled rewrote `/etc/resolv.conf` on 2026-11-16 04:06, after the node started on 2026-11-11). Inferred: replacing the file dropped the mount, so the node asked its own DNS, which has no upstream. Fix, in the fetch script: put the mount back in the running process (`nsenter --mount … mount --bind`) before asking; no restart of the node. The request then succeeded.
+- 📲 `manifest.webmanifest`, `icon.svg`, and two PNG icons drawn from it, served by the Proxy and linked from the page.
+- ✅ Checked: from the home PC over the tailnet, `curl https://<name>:7171/api/conversations` answers 200 with the certificate verified; on the Host Mac, by name, the handshake is HTTP/2 with the certificate verified. The certificate agent's first run under launchd logged "certificate unchanged". Chrome on loopback fires `beforeinstallprompt` (the page is installable) and shows the "Turn on notifications" button. 30 seam tests pass.
+- ❓ Not checked: installing and a real notification on `maxs-pc` or Windows; a renewal (the first is due around mid-January 2027: tailscaled renews in the last third of the 90 days); the devbox can't reach the node at all (time-out by address, before and unrelated to HTTPS as far as I can tell).
+
+Next:
+- Max: open the new address on `maxs-pc`, install it (address bar → install icon), click "Turn on notifications", and wait for a real Message.

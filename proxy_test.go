@@ -848,3 +848,19 @@ func TestAttachmentsNotOnTheMacOrNotReportedAreNotFound(t *testing.T) {
 		}
 	}
 }
+
+func TestTheWebAppManifestAndItsIconsAreServed(t *testing.T) {
+	p := startProxy(t, "imsg-0.21.0-01.jsonl")
+
+	for path, contentType := range map[string]string{
+		"/manifest.webmanifest": "application/manifest+json",
+		"/icon-192.png":         "image/png",
+		"/icon-512.png":         "image/png",
+		"/icon.svg":             "image/svg+xml",
+	} {
+		res := p.get(t, path, tailnetAddr)
+		if res.Code != http.StatusOK || res.Header().Get("Content-Type") != contentType {
+			t.Errorf("GET %s = %d %q, want 200 %q", path, res.Code, res.Header().Get("Content-Type"), contentType)
+		}
+	}
+}
