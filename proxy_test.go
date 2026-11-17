@@ -360,7 +360,7 @@ func TestConversationMessagesAreOldestFirstAndDefaultToTheLast100(t *testing.T) 
 		t.Errorf("Message IDs = %v, want %v (oldest first)", ids, want)
 	}
 	last := got[len(got)-1]
-	want := Message{ID: 183576, GUID: "00000000-0000-0000-0000-000000000005", ConversationID: 242, FromMe: true, Sender: "person0@example.com", Text: "🧪 imessage-proxy test (P0 rpc)", CreatedAt: "2026-11-12T08:27:59.322Z"}
+	want := Message{ID: 183576, GUID: "00000000-0000-0000-0000-000000000005", ConversationID: 242, IsFromMe: true, Sender: "person0@example.com", Text: "🧪 imessage-proxy test (P0 rpc)", CreatedAt: "2026-11-12T08:27:59.322Z"}
 	if fmt.Sprintf("%+v", last) != fmt.Sprintf("%+v", want) {
 		t.Errorf("newest Message = %+v\nwant %+v", last, want)
 	}
@@ -425,8 +425,8 @@ func TestUnsupportedMessagesGetPlaceholders(t *testing.T) {
 			t.Errorf("%s: Text %q, Placeholder %q; want %q, %q", tc.name, tc.got.Text, tc.got.Placeholder, tc.text, tc.placeholder)
 		}
 	}
-	if edited := messageByID(t, edits, 183568); !edited.Edited || edited.Text != "Synthetic message 93" {
-		t.Errorf("edited Message = %+v, want Edited with its current text", edited)
+	if edited := messageByID(t, edits, 183568); !edited.IsEdited || edited.Text != "Synthetic message 93" {
+		t.Errorf("edited Message = %+v, want IsEdited with its current text", edited)
 	}
 }
 
@@ -647,7 +647,7 @@ func TestLiveTapbacksPointAtTheirMessageAndContentlessRowsAreLeftOut(t *testing.
 		t.Errorf("photo 183536 GUID = %q, want its GUID so tapbacks can find it", target.GUID)
 	}
 	tapback := byID[183537]
-	if tapback.ReactsTo != "00000000-0000-0000-0000-000000000001" || tapback.Tapback != "❤️" || tapback.SenderName != "Synthetic Name 1" || tapback.TapbackRemoved {
+	if tapback.ReactsTo != "00000000-0000-0000-0000-000000000001" || tapback.Tapback != "❤️" || tapback.SenderName != "Synthetic Name 1" || tapback.IsTapbackRemoved {
 		t.Errorf("tapback 183537 = %+v, want ❤️ from Synthetic Name 1 on 183536's GUID", tapback)
 	}
 	if m, ok := byID[183562]; ok {
@@ -772,8 +772,8 @@ func TestMessagesListTheirAttachmentsAndWhetherTheyreOnTheMac(t *testing.T) {
 		want []Attachment
 	}{
 		{183536, []Attachment{{Name: "attachment-0.HEIC", Kind: "image"}}},
-		{183458, []Attachment{{Name: "attachment-2.HEIC", Kind: "image", Missing: true}}},
-		{183439, []Attachment{{Name: "attachment-6.mov", Kind: "video", Missing: true}}},
+		{183458, []Attachment{{Name: "attachment-2.HEIC", Kind: "image", IsMissing: true}}},
+		{183439, []Attachment{{Name: "attachment-6.mov", Kind: "video", IsMissing: true}}},
 		{183330, nil}, // a link preview's payload isn't a file to show
 	} {
 		if got := messageByID(t, group, tc.id).Attachments; fmt.Sprint(got) != fmt.Sprint(tc.want) {
@@ -811,6 +811,25 @@ func TestAnOnDiskHEICIsServedAsJPEG(t *testing.T) {
 	after := p.imsgRequests(t, "messages.after")
 	if len(after) != 1 || after[0]["since_rowid"] != 183535.0 || after[0]["chat_id"] != 21.0 || after[0]["attachments"] != true {
 		t.Errorf("messages.after requests = %v, want the one Message 183536 in Conversation 21", after)
+	}
+}
+
+// Voice messages arrive as Opus in a .caf file, which no browser plays.
+func TestAVoiceMessageIsServedAsAnM4A(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	caf := filepath.Join(home, "Library/Messages/Attachments/00/00/0000/attachment-0.caf")
+	must(os.MkdirAll(filepath.Dir(caf), 0o755))
+	if out, err := exec.Command("say", "--output-file", caf, "--data-format=LEI16@24000", "test").CombinedOutput(); err != nil {
+		t.Fatalf("say: %v\n%s", err, out)
+	}
+	p := startProxy(t, "imsg-0.21.0-voice.jsonl")
+
+	got := p.get(t, "/api/conversations/1947/messages/183717/attachments/0", tailnetAddr)
+
+	// An MPEG-4 file starts with a box whose type, at byte 4, is "ftyp".
+	if body := got.Body.Bytes(); got.Code != http.StatusOK || got.Header().Get("Content-Type") != "audio/mp4" || len(body) < 8 || string(body[4:8]) != "ftyp" {
+		t.Errorf("status %d, Content-Type %q, %d bytes; want an M4A", got.Code, got.Header().Get("Content-Type"), got.Body.Len())
 	}
 }
 

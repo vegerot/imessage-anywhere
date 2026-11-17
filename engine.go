@@ -33,8 +33,8 @@ type Engine struct {
 }
 
 type pendingCall struct {
-	response  chan rpcResponse
-	subscribe bool // a watch.subscribe call: register its channel before reading on
+	response    chan rpcResponse
+	isSubscribe bool // a watch.subscribe call: register its channel before reading on
 }
 
 type rpcResponse struct {
@@ -126,7 +126,7 @@ func (e *Engine) readLoop(stdout io.Reader) {
 		}
 		switch msg.Method {
 		case "message":
-			if m := msg.Params.Message.toMessage(); m.visible() {
+			if m := msg.Params.Message.toMessage(); m.isVisible() {
 				e.deliver(msg.Params.Subscription, m)
 			}
 			continue
@@ -139,7 +139,7 @@ func (e *Engine) readLoop(stdout io.Reader) {
 		call, ok := e.pending[id]
 		delete(e.pending, id)
 		resp := rpcResponse{Result: msg.Result, Error: msg.Error}
-		if ok && call.subscribe && msg.Error == nil {
+		if ok && call.isSubscribe && msg.Error == nil {
 			var result struct{ Subscription int }
 			if json.Unmarshal(msg.Result, &result) == nil {
 				ch := make(chan Message, subscriptionBuffer)
@@ -196,8 +196,8 @@ func (e *Engine) call(ctx context.Context, method string, params any, out any) e
 	return json.Unmarshal(resp.Result, out)
 }
 
-func (e *Engine) request(ctx context.Context, method string, params any, subscribe bool) (rpcResponse, error) {
-	call := pendingCall{response: make(chan rpcResponse, 1), subscribe: subscribe}
+func (e *Engine) request(ctx context.Context, method string, params any, isSubscribe bool) (rpcResponse, error) {
+	call := pendingCall{response: make(chan rpcResponse, 1), isSubscribe: isSubscribe}
 	e.mu.Lock()
 	e.nextID++
 	id := strconv.Itoa(e.nextID)
@@ -329,12 +329,12 @@ type Message struct {
 	ID             int64  `json:"id"`
 	GUID           string `json:"guid"`
 	ConversationID int64  `json:"conversationId"`
-	FromMe         bool   `json:"fromMe"`
+	IsFromMe       bool   `json:"isFromMe"`
 	Sender         string `json:"sender"`
 	SenderName     string `json:"senderName,omitempty"` // Contact name or formatted Handle; empty for my own
 	Text           string `json:"text"`
 	CreatedAt      string `json:"createdAt"`
-	Edited         bool   `json:"edited,omitempty"`
+	IsEdited       bool   `json:"isEdited,omitempty"`
 	// IsUnread: received and not yet read on any of my Apple devices, per the Host Mac's database.
 	IsUnread  bool       `json:"isUnread,omitempty"`
 	Reactions []Reaction `json:"reactions,omitempty"`
@@ -343,30 +343,30 @@ type Message struct {
 	Placeholder string       `json:"placeholder,omitempty"`
 	Attachments []Attachment `json:"attachments,omitempty"`
 	// A tapback arriving live is its own row pointing at the Message it reacts to.
-	ReactsTo       string `json:"reactsTo,omitempty"`
-	Tapback        string `json:"tapback,omitempty"`
-	TapbackRemoved bool   `json:"tapbackRemoved,omitempty"`
+	ReactsTo         string `json:"reactsTo,omitempty"`
+	Tapback          string `json:"tapback,omitempty"`
+	IsTapbackRemoved bool   `json:"isTapbackRemoved,omitempty"`
 }
 
-// Attachment is a file sent with a Message. Missing means it isn't on the Host Mac's disk:
+// Attachment is a file sent with a Message. IsMissing means it isn't on the Host Mac's disk:
 // Messages.app downloads attachments only when asked (experiment, 2026-11-12).
 type Attachment struct {
-	Name    string `json:"name"`
-	Kind    string `json:"kind"` // image, video, audio, sticker, or file
-	Missing bool   `json:"missing,omitempty"`
+	Name      string `json:"name"`
+	Kind      string `json:"kind"` // image, video, audio, sticker, or file
+	IsMissing bool   `json:"isMissing,omitempty"`
 }
 
 // visible says whether a Message has anything to show; whitespace-only rows (seen in the
 // wild) are left out of history and the live stream alike.
-func (m Message) visible() bool {
+func (m Message) isVisible() bool {
 	return m.Text != "" || m.Placeholder != "" || len(m.Reactions) > 0 || m.ReactsTo != "" || len(m.Attachments) > 0
 }
 
 // Reaction is a tapback on a Message.
 type Reaction struct {
-	Emoji  string `json:"emoji"`
-	From   string `json:"from"`
-	FromMe bool   `json:"fromMe,omitempty"`
+	Emoji    string `json:"emoji"`
+	From     string `json:"from"`
+	IsFromMe bool   `json:"isFromMe,omitempty"`
 }
 
 type imsgMessage struct {
@@ -404,7 +404,7 @@ type imsgAttachment struct {
 	TransferName string `json:"transfer_name"`
 	UTI          string `json:"uti"`
 	IsSticker    bool   `json:"is_sticker"`
-	Missing      bool   `json:"missing"`
+	IsMissing    bool   `json:"missing"`
 }
 
 // objectReplacement marks where an attachment or app balloon sits inside a Message's text.
@@ -415,11 +415,11 @@ func (m imsgMessage) toMessage() Message {
 		ID:             m.ID,
 		GUID:           m.GUID,
 		ConversationID: m.ChatID,
-		FromMe:         m.IsFromMe,
+		IsFromMe:       m.IsFromMe,
 		Sender:         m.Sender,
 		Text:           strings.TrimSpace(strings.ReplaceAll(m.Text, objectReplacement, "")),
 		CreatedAt:      m.CreatedAt,
-		Edited:         m.EditedAt != "",
+		IsEdited:       m.EditedAt != "",
 		Placeholder:    m.placeholder(),
 	}
 	if !m.IsFromMe {
@@ -428,16 +428,16 @@ func (m imsgMessage) toMessage() Message {
 	}
 	if !m.isLinkPreview() {
 		for _, a := range m.Attachments {
-			msg.Attachments = append(msg.Attachments, Attachment{Name: a.TransferName, Kind: a.kind(), Missing: a.Missing})
+			msg.Attachments = append(msg.Attachments, Attachment{Name: a.TransferName, Kind: a.kind(), IsMissing: a.IsMissing})
 		}
 	}
 	if m.IsReaction {
 		msg.Text, msg.Placeholder = "", "" // its text is a summary like "Loved an image"
-		msg.ReactsTo, msg.Tapback, msg.TapbackRemoved = m.ReactedToGUID, m.ReactionEmoji, !m.IsReactionAdd
+		msg.ReactsTo, msg.Tapback, msg.IsTapbackRemoved = m.ReactedToGUID, m.ReactionEmoji, !m.IsReactionAdd
 		return msg
 	}
 	for _, r := range m.Reactions {
-		msg.Reactions = append(msg.Reactions, Reaction{Emoji: r.Emoji, From: nameOr(r.SenderName, r.Sender), FromMe: r.IsFromMe})
+		msg.Reactions = append(msg.Reactions, Reaction{Emoji: r.Emoji, From: nameOr(r.SenderName, r.Sender), IsFromMe: r.IsFromMe})
 	}
 	return msg
 }
@@ -532,7 +532,7 @@ func (e *Engine) Messages(ctx context.Context, conversationID int64, limit int) 
 	}
 	messages := make([]Message, 0, len(result.Messages))
 	for _, m := range slices.Backward(result.Messages) { // imsg returns newest first
-		if msg := m.toMessage(); msg.visible() {
+		if msg := m.toMessage(); msg.isVisible() {
 			messages = append(messages, msg)
 		}
 	}
@@ -634,7 +634,7 @@ func (e *Engine) AttachmentFile(ctx context.Context, conversationID, messageID i
 		return AttachmentFile{}, errNoAttachment
 	}
 	a := result.Messages[0].Attachments[index]
-	if a.Missing {
+	if a.IsMissing {
 		return AttachmentFile{}, errNoAttachment
 	}
 	home, err := os.UserHomeDir()

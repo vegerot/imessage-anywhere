@@ -164,6 +164,49 @@
 		overflow-wrap: anywhere;
 	}
 
+	/* Loading skeletons: gray shapes where text will appear. A row's name, time, and preview
+	   are empty until they load (app.ts shows empty rows first), and so are .skeleton bubbles. */
+	.name:empty,
+	.when:empty,
+	.preview:empty,
+	.skeleton .bubble {
+		background: var(--separator);
+		border-radius: 0.25rem;
+
+		animation: skeleton-pulse 0.8s ease-in-out infinite alternate;
+
+		@media (prefers-reduced-motion: reduce) {
+			animation: none;
+		}
+	}
+
+	/* Each shape plus its margins is as tall as the text it stands for, so nothing shifts. */
+	.name:empty {
+		inline-size: 45%;
+		block-size: 0.8lh;
+		margin-block: 0.1lh;
+	}
+
+	.when:empty {
+		inline-size: 2.5rem;
+		block-size: 0.8lh;
+		margin-block: 0.1lh;
+	}
+
+	.preview:empty {
+		display: block;
+		inline-size: 85%;
+		min-block-size: 0;
+		block-size: 0.8lh;
+		margin-block: 0.1lh 1.1lh;
+	}
+
+	@keyframes skeleton-pulse {
+		to {
+			opacity: 0.4;
+		}
+	}
+
 	#connection {
 		position: fixed;
 		inset-block-start: 0.75rem;
@@ -251,9 +294,21 @@
 			justify-items: start;
 			max-inline-size: min(70%, 34rem);
 
-			&.from-me {
+			&.from-me,
+			&.skeleton:nth-child(even) {
 				align-self: end;
 				justify-items: end;
+			}
+
+			&.skeleton {
+				inline-size: 100%;
+
+				.bubble {
+					inline-size: var(--skeleton-width);
+					min-block-size: 1lh;
+
+					border-radius: var(--bubble-radius);
+				}
 			}
 
 			&:has(.tapbacks) {
@@ -544,7 +599,7 @@
 	<p id="connection" role="status" hidden>Can’t reach the Host Mac. Reconnecting…</p>
 	<nav aria-label="Conversations">
 		<h1>Messages</h1>
-		<ul id="conversations"></ul>
+		<ul id="conversations" aria-busy="true"></ul>
 	</nav>
 	<main>
 		<p id="status">Loading Conversations…</p>

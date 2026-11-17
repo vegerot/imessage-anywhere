@@ -51,10 +51,10 @@ func NewServer(engine *Engine) http.Handler {
 // node, tailnet callers keep their own 100.x address.
 var tailnet = netip.MustParsePrefix("100.64.0.0/10")
 
-// allowedHost refuses DNS rebinding: a page on another site whose name rebinds to the Host
+// isAllowedHost refuses DNS rebinding: a page on another site whose name rebinds to the Host
 // Mac's address would otherwise pass the source filter and the cross-origin check. Its
 // requests carry that site's name; mine carry an IP address, localhost, or a tailnet name.
-func allowedHost(hostPort string) bool {
+func isAllowedHost(hostPort string) bool {
 	host := hostPort
 	if h, _, err := net.SplitHostPort(hostPort); err == nil {
 		host = h
@@ -74,7 +74,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "only tailnet devices may connect", http.StatusForbidden)
 		return
 	}
-	if !allowedHost(r.Host) {
+	if !isAllowedHost(r.Host) {
 		http.Error(w, "unknown host name", http.StatusForbidden)
 		return
 	}
@@ -242,18 +242,43 @@ func (s *server) sendMessage(w http.ResponseWriter, r *http.Request) {
 
 // Content types by Apple UTI; mime_type from imsg is unreliable (empty in history reads).
 var attachmentTypes = map[string]string{
-	"public.jpeg":               "image/jpeg",
-	"public.png":                "image/png",
-	"com.compuserve.gif":        "image/gif",
-	"public.heic":               "image/jpeg", // converted: Chrome doesn't display HEIC
-	"public.heif":               "image/jpeg",
-	"public.mpeg-4":             "video/mp4",
-	"com.apple.quicktime-movie": "video/quicktime",
-	"com.adobe.pdf":             "application/pdf",
+	"public.jpeg":                        "image/jpeg",
+	"public.png":                         "image/png",
+	"com.compuserve.gif":                 "image/gif",
+	"public.heic":                        "image/jpeg", // converted, like the audio/mp4 ones below
+	"public.heif":                        "image/jpeg",
+	"com.apple.m4a-audio":                "audio/mp4",
+	"com.apple.coreaudio-format":         "audio/mp4",
+	"org.3gpp.adaptive-multi-rate-audio": "audio/mp4",
+	"public.mpeg-4":                      "video/mp4",
+	"com.apple.quicktime-movie":          "video/quicktime",
+	"com.adobe.pdf":                      "application/pdf",
 }
 
-// serveAttachment serves a file imsg reports for a Message, if it's on the Host Mac's disk.
-// iPhone photos (HEIC, about two thirds of received images) are converted to JPEG.
+// converters turn formats browsers can't show into ones they can, with tools macOS ships.
+// Each takes the source and output paths. iPhone photos are HEIC (about two thirds of
+// received images); voice messages are Opus in a .caf file, or AMR over SMS (measured
+// 2026-11-16: afconvert takes 0.14 s for a 40 s voice message).
+var converters = map[string]struct {
+	ext     string
+	command func(in, out string) *exec.Cmd
+}{
+	"public.heic":                        {".jpg", sips},
+	"public.heif":                        {".jpg", sips},
+	"com.apple.coreaudio-format":         {".m4a", afconvert},
+	"org.3gpp.adaptive-multi-rate-audio": {".m4a", afconvert},
+}
+
+func sips(in, out string) *exec.Cmd {
+	return exec.Command("sips", "-s", "format", "jpeg", in, "--out", out)
+}
+
+func afconvert(in, out string) *exec.Cmd {
+	return exec.Command("afconvert", "-f", "m4af", "-d", "aac", in, out)
+}
+
+// serveAttachment serves a file imsg reports for a Message, if it's on the Host Mac's disk,
+// converted when a browser couldn't show it.
 func (s *server) serveAttachment(w http.ResponseWriter, r *http.Request) {
 	conversationID, ok1 := pathID(r, "id")
 	messageID, ok2 := pathID(r, "message")
@@ -272,8 +297,8 @@ func (s *server) serveAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	path := file.Path
-	if file.UTI == "public.heic" || file.UTI == "public.heif" {
-		converted, err := convertToJPEG(path)
+	if converter, ok := converters[file.UTI]; ok {
+		converted, err := convert(path, converter.ext, converter.command)
 		if errors.Is(err, fs.ErrNotExist) {
 			http.NotFound(w, r)
 			return
@@ -309,19 +334,20 @@ func (s *server) serveAttachment(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, file.Name, info.ModTime(), f) // handles Range, so videos can seek
 }
 
-// convertToJPEG converts an image with macOS's sips into a temporary JPEG file.
-func convertToJPEG(path string) (string, error) {
+// convert runs a converter on path and returns its output, a temporary file with ext.
+func convert(path, ext string, command func(in, out string) *exec.Cmd) (string, error) {
 	if _, err := os.Stat(path); err != nil {
 		return "", err
 	}
-	out, err := os.CreateTemp("", "imessage-anywhere-*.jpg")
+	out, err := os.CreateTemp("", "imessage-anywhere-*"+ext)
 	if err != nil {
 		return "", err
 	}
 	out.Close()
-	if output, err := exec.Command("sips", "-s", "format", "jpeg", path, "--out", out.Name()).CombinedOutput(); err != nil {
+	cmd := command(path, out.Name())
+	if output, err := cmd.CombinedOutput(); err != nil {
 		os.Remove(out.Name())
-		return "", fmt.Errorf("sips: %v: %s", err, output)
+		return "", fmt.Errorf("%s: %v: %s", filepath.Base(cmd.Path), err, output)
 	}
 	return out.Name(), nil
 }
