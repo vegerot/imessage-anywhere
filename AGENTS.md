@@ -13,7 +13,7 @@ This folder is its own project root inside the `ai-conversations` archive. Paths
 ## Building
 
 - `app.js` is generated and not committed: run `go generate ./...` once in a fresh checkout and after editing `app.ts` (it type-checks `app.ts` and writes `app.js`; `go build` and `go test` need the file). `scripts/install-launch-agent.sh` runs it before building.
-- `go test ./...` runs the seam tests; `scripts/install-launch-agent.sh` builds, signs, and restarts the launchd agent that serves the page.
+- `go test ./...` runs the seam tests; `scripts/install-launch-agent.sh` builds, signs, and restarts the launchd agent that serves the page. The agent runs the repo's `imessage-anywhere` file through a symlink in `~/.local/bin`, so don't leave a plain `go build -o imessage-anywhere` there: unsigned, it loses Full Disk Access at the agent's next restart.
 
 ## Commits
 

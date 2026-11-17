@@ -1,13 +1,16 @@
 #!/bin/sh
-# Build the Proxy into ~/.local/bin and (re)start it as a launchd agent.
-# The agent runs this installed copy, not the repo build, so rebuilding while developing
-# never disturbs it (or a Full Disk Access grant that may be tied to its exact build).
+# Build the Proxy here, link ~/.local/bin/imessage-anywhere to it, and (re)start it as a
+# launchd agent. The agent runs the repo's own build through that symlink, so there is one
+# executable. Full Disk Access is granted to the real file here, not to the symlink
+# (macOS matches the real path; verified 2026-11-16).
+# Always build through this script: a plain `go build` is ad-hoc signed, which doesn't match
+# the grant, so the agent can't read the Messages database after its next restart (verified).
 set -eu
 cd "$(dirname "$0")/.."
 label=com.vegerot.imessage-anywhere
 plist="$HOME/Library/LaunchAgents/$label.plist"
 
-binary="$HOME/.local/bin/imessage-anywhere"
+binary="$PWD/imessage-anywhere"
 go generate ./... # type-check app.ts and compile it to app.js
 go build -o "$binary" .
 # Sign with a stable identity: macOS ties a Full Disk Access grant to the program's
@@ -19,6 +22,7 @@ if [ -n "$identity" ]; then
 else
 	echo "warning: no Apple Development identity; ad-hoc signed, so each rebuild needs a new Full Disk Access grant" >&2
 fi
+ln -sf "$binary" "$HOME/.local/bin/imessage-anywhere"
 cp "launchd/$label.plist" "$plist"
 launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
 launchctl bootstrap "gui/$(id -u)" "$plist"
