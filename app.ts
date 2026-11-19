@@ -687,7 +687,6 @@ function resetWatchdog(): void {
 
 // ── Navigation: clean paths, animated like Messages ───────────────────────────────────
 
-const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)");
 const conversationPath = /^\/conversations\/(\d+)$/;
 
 function conversationIDFromPath(): number | null {
@@ -700,7 +699,7 @@ function conversationIDFromPath(): number | null {
 function route({ shouldAnimate }: { shouldAnimate: boolean }): void {
 	const id = conversationIDFromPath();
 	const previousID = openID;
-	if (!shouldAnimate || reduceMotion.matches) {
+	if (!shouldAnimate) {
 		showConversation(id);
 		loadOpenConversation(id);
 		moveFocus(id, previousID);
