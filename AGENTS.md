@@ -2,7 +2,7 @@
 
 A web UI for sending and receiving iMessages from any machine on my LAN or Tailnet, while my Mac is online.
 
-This folder is its own project root inside the `ai-conversations` archive. Paths below are relative to `imessage-anywhere/`. `CLAUDE.md` is a symlink to this file.
+This repository is the project root. It lived inside the `ai-conversations` archive until 2026-11-24; the conversation notes stayed there. `CLAUDE.md` is a symlink to this file.
 
 ## Resuming work
 

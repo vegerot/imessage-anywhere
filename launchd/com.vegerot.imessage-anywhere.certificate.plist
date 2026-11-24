@@ -11,7 +11,7 @@
 	<string>com.vegerot.imessage-anywhere.certificate</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/Users/bytedance/code/github.com/vegerot/ai-conversations/imessage-anywhere/scripts/setup.sh</string>
+		<string>/Users/bytedance/code/github.com/vegerot/imessage-anywhere/scripts/setup.sh</string>
 		<string>fetch-certificate</string>
 	</array>
 	<key>RunAtLoad</key>
