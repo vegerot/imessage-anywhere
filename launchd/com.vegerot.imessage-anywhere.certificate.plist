@@ -3,7 +3,7 @@
 <!--
   iMessage Anywhere: fetches the Proxy's HTTPS certificate every Monday morning (and at
   login), so a renewed one arrives well before the old one expires. A Mac that was asleep
-  at that time runs the job when it wakes. Installed by scripts/install-launch-agent.sh.
+  at that time runs the job when it wakes. Installed by scripts/setup.sh install-launch-agent.
 -->
 <plist version="1.0">
 <dict>
@@ -11,7 +11,8 @@
 	<string>com.vegerot.imessage-anywhere.certificate</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/Users/bytedance/code/github.com/vegerot/ai-conversations/imessage-anywhere/scripts/fetch-certificate.sh</string>
+		<string>/Users/bytedance/code/github.com/vegerot/ai-conversations/imessage-anywhere/scripts/setup.sh</string>
+		<string>fetch-certificate</string>
 	</array>
 	<key>RunAtLoad</key>
 	<true/>

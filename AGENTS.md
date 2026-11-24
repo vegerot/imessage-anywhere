@@ -12,10 +12,10 @@ This folder is its own project root inside the `ai-conversations` archive. Paths
 
 ## Building
 
-- `app.js` is generated and not committed: run `go generate ./...` once in a fresh checkout and after editing `app.ts` (it type-checks `app.ts` and writes `app.js`; `go build` and `go test` need the file). `scripts/install-launch-agent.sh` runs it before building.
-- `go test ./...` runs the seam tests; `scripts/install-launch-agent.sh` builds, signs, and restarts the launchd agent that serves the page. The agent runs the repo's `imessage-anywhere` file through a symlink in `~/.local/bin`, so don't leave a plain `go build -o imessage-anywhere` there: unsigned, it loses Full Disk Access at the agent's next restart.
+- `app.js` is generated and not committed: run `go generate ./...` once in a fresh checkout and after editing `app.ts` (it type-checks `app.ts` and writes `app.js`; `go build` and `go test` need the file). `scripts/setup.sh install-launch-agent` runs it before building.
+- `go test ./...` runs the seam tests; `scripts/setup.sh install-launch-agent` builds, signs, and restarts the launchd agent that serves the page. The agent runs the repo's `imessage-anywhere` file through a symlink in `~/.local/bin`, so don't leave a plain `go build -o imessage-anywhere` there: unsigned, it loses Full Disk Access at the agent's next restart.
 
-- The page is at `https://work-macbook.<tailnet>.ts.net:7171` from the tailnet and `http://127.0.0.1:7171` on the Host Mac. `scripts/fetch-certificate.sh` fetches the HTTPS certificate from the Pi; a launchd agent runs it weekly (log: `~/Library/Logs/imessage-anywhere-certificate.log`).
+- The page is at `https://work-macbook.<tailnet>.ts.net:7171` from the tailnet and `http://127.0.0.1:7171` on the Host Mac. `scripts/setup.sh fetch-certificate` fetches the HTTPS certificate from the Pi; a launchd agent runs it weekly (log: `~/Library/Logs/imessage-anywhere-certificate.log`).
 - `icon-192.png` and `icon-512.png` are drawn from `icon.svg`: `rsvg-convert --width=192 --height=192 --output=icon-192.png icon.svg` (and 512).
 
 ## Commits

@@ -2,7 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
   iMessage Anywhere: runs the Proxy at login and keeps it running.
-  Installed by scripts/install-launch-agent.sh. launchd restarts the Proxy whenever it exits:
+  Installed by scripts/setup.sh install-launch-agent. launchd restarts the Proxy whenever it exits:
   after a crash, while Full Disk Access is missing, or while the WireGuard tunnel (and so
   172.16.1.2) isn't up yet. ThrottleInterval spaces those retries 30 s apart.
 -->

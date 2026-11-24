@@ -21,7 +21,7 @@ func main() {
 		"comma-separated addresses to listen on: the WireGuard tunnel address and loopback")
 	configDir, _ := os.UserConfigDir() // ~/Library/Application Support
 	certificate := flag.String("certificate", filepath.Join(configDir, "imessage-anywhere", "certificate.pem"),
-		"the HTTPS certificate chain and its private key in one PEM file (scripts/fetch-certificate.sh)")
+		"the HTTPS certificate chain and its private key in one PEM file (scripts/setup.sh fetch-certificate)")
 	flag.Parse()
 
 	cmd := exec.Command(*imsgPath, "rpc")
@@ -58,7 +58,7 @@ func main() {
 			continue
 		}
 		log.Printf("serving on https://%s", addr)
-		// A missing certificate exits here; launchd retries until fetch-certificate.sh has run.
+		// A missing certificate exits here; launchd retries until setup.sh fetch-certificate has run.
 		go func() { log.Fatal((&http.Server{Handler: handler}).ServeTLS(ln, *certificate, *certificate)) }()
 	}
 
